@@ -23,6 +23,7 @@ class AppConfig:
     """Configuracion global del sistema."""
     negocio_nombre: str = "Mi Negocio"
     sector: str = ""                 # vertical de ejemplo (taller mecanico, retail, ...)
+    slogan: str = "Gira tus datos en resultados"
     moneda: str = "MXN"
     directorio_datos: Path = Path("data")
     db_path: Path = Path("data/almacen.duckdb")

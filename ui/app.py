@@ -25,7 +25,7 @@ def main():
 
     with st.sidebar:
         st.markdown("#### :material/donut_large: GIRO")
-        st.caption("Inteligencia de negocio")
+        st.caption(obtener_config().slogan)
 
     pg = st.navigation(paginas, position="sidebar", expanded=True)
 
@@ -39,6 +39,12 @@ def main():
                 key="inp_negocio_nombre",
                 help="Se guarda durante la sesion. Persistelo en config/config.yaml.",
             )
+            nuevo_slogan = st.text_input(
+                "Eslogan",
+                value=cfg.slogan,
+                key="inp_slogan",
+                help="Aparece bajo la marca GIRO. Persistelo en config/config.yaml.",
+            )
             nueva_moneda = st.selectbox(
                 "Moneda",
                 ["CLP", "MXN", "USD", "EUR", "COP"],
@@ -48,6 +54,7 @@ def main():
                 help="Formato de los importes en toda la app.",
             )
         st.session_state["negocio_nombre"] = (nuevo_nombre or "").strip() or "Mi Negocio"
+        st.session_state["slogan"] = nuevo_slogan.strip()
         st.session_state["moneda"] = nueva_moneda
         cfg = obtener_config()
 

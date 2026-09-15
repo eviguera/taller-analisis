@@ -30,6 +30,7 @@ def cargar_config(ruta: Optional[Path] = None) -> AppConfig:
     cfg = AppConfig(
         negocio_nombre=negocio.get("nombre", "Mi Negocio"),
         sector=negocio.get("sector", ""),
+        slogan=negocio.get("slogan", "Gira tus datos en resultados"),
         moneda=negocio.get("moneda", "MXN"),
         directorio_datos=base / raw.get("almacen", {}).get("directorio_datos", "data"),
         cache_dir=base / raw.get("almacen", {}).get("cache_dir", "data/cache"),
@@ -70,6 +71,7 @@ def guardar_config(cfg: AppConfig, ruta: Optional[Path] = None) -> Path:
         "negocio": {
             "nombre": cfg.negocio_nombre,
             "sector": cfg.sector or "",
+            "slogan": cfg.slogan,
             "moneda": cfg.moneda,
         },
         "almacen": {

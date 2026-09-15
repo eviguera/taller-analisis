@@ -7,6 +7,7 @@
 negocio:
   nombre: "Mi Taller Mecanico"
   sector: "taller mecanico"
+  slogan: "Gira tus datos en resultados"
   moneda: "CLP"
 
 # Almacen escalable
