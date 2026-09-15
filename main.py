@@ -1,4 +1,4 @@
-"""CLI para el sistema de analisis del taller mecanico.
+"""CLI de GIRO, inteligencia de negocio.
 
 Uso:
     python main.py resumen [--data DIR]
@@ -47,7 +47,7 @@ def _moneda(valor, cfg):
 def cmd_resumen(args):
     cfg = _config(args)
     print("=" * 70)
-    print("RESUMEN DE DATOS DEL TALLER MECANICO")
+    print("RESUMEN DE NEGOCIO")
     print("=" * 70)
     data = load_all(cfg)
     for nombre, info in get_data_summary(data).items():
@@ -201,7 +201,7 @@ def cmd_dashboard(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Sistema de Analisis del Taller Mecanico")
+    parser = argparse.ArgumentParser(description="GIRO - Inteligencia de negocio")
     subparsers = parser.add_subparsers(dest="comando", required=True)
 
     pr = subparsers.add_parser("resumen", help="Resumen de datos y KPIs")

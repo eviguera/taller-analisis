@@ -149,7 +149,7 @@ class ReportGenerator:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Reporte Taller Mecanico - {fecha.strftime('%d/%m/%Y')}</title>
+<title>GIRO - Reporte de Inteligencia {fecha.strftime('%d/%m/%Y')}</title>
 <style>
     :root {{
         --primary: #2563eb; --dark: #1e293b; --light: #f1f5f9; --accent: #f59e0b;
@@ -188,7 +188,7 @@ class ReportGenerator:
 </head>
 <body>
     <div class="header">
-        <h1>Sistema de Analisis del Taller Mecanico</h1>
+        <h1>GIRO - Inteligencia de negocio</h1>
         <p>Reporte generado el {fecha.strftime('%d de %B de %Y a las %H:%M')}</p>
     </div>
 
@@ -265,7 +265,7 @@ class ReportGenerator:
         </div>
 
         <div class="footer">
-            Generado por el Sistema de Analisis de Datos del Taller Mecanico - v1.0.0
+            Generado por GIRO (inteligencia de negocio) - v1.4
         </div>
     </div>
 </body>

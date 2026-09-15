@@ -1,13 +1,14 @@
-# Guion de demo para inversores
+# Guion de demo de GIRO para inversores
 
 Duracion estimada: ~8 min. Todas las cifras son las reales del dashboard.
+(La demo usa el dataset de ejemplo de un taller mecanico; GIRO aplica a cualquier negocio.)
 
 ## Apertura (30 s)
 
-> "Este es un sistema de inteligencia comercial para talleres mecanicos:
-> transforma los datos operativos de cada vehiculo en decisiones.
-> El stack es 100% open source (Streamlit, DuckDB, scikit-learn, PSPP):
-> costo de licencias **cero**, solo pagarias infraestructura si el volumen crece."
+> "**GIRO** es una plataforma de inteligencia comercial para pymes: transforma los
+> datos operativos de tu negocio en decisiones. El stack es 100% open source
+> (Streamlit, DuckDB, scikit-learn, PSPP): costo de licencias **cero**, solo
+> pagarias infraestructura si el volumen crece."
 
 ## 1. Resumen
 

@@ -4,7 +4,7 @@ from .data_loader import merge_datasets
 
 
 class Analyzer:
-    """Analisis exploratorio de los datos del taller mecanico."""
+    """Analisis exploratorio de los datos del negocio (demo: taller mecanico)."""
 
     def __init__(self, data):
         self.data = data

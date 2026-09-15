@@ -25,9 +25,12 @@ def cargar_config(ruta: Optional[Path] = None) -> AppConfig:
 
     base = Path(ruta).resolve().parent.parent
 
+    negocio = (raw.get("negocio") or raw.get("taller") or {}) or {}
+
     cfg = AppConfig(
-        taller_nombre=raw.get("taller", {}).get("nombre", "Taller Mecanico"),
-        moneda=raw.get("taller", {}).get("moneda", "MXN"),
+        negocio_nombre=negocio.get("nombre", "Mi Negocio"),
+        sector=negocio.get("sector", ""),
+        moneda=negocio.get("moneda", "MXN"),
         directorio_datos=base / raw.get("almacen", {}).get("directorio_datos", "data"),
         cache_dir=base / raw.get("almacen", {}).get("cache_dir", "data/cache"),
         usar_cache=raw.get("almacen", {}).get("usar_cache", True),
@@ -64,7 +67,11 @@ def cargar_config(ruta: Optional[Path] = None) -> AppConfig:
 def guardar_config(cfg: AppConfig, ruta: Optional[Path] = None) -> Path:
     ruta = Path(ruta) if ruta else Path(__file__).resolve().parent.parent.parent / "config" / "config.yaml"
     raw = {
-        "taller": {"nombre": cfg.taller_nombre, "moneda": cfg.moneda},
+        "negocio": {
+            "nombre": cfg.negocio_nombre,
+            "sector": cfg.sector or "",
+            "moneda": cfg.moneda,
+        },
         "almacen": {
             "directorio_datos": "data",
             "db": "data/almacen.duckdb",

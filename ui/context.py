@@ -19,7 +19,7 @@ def _config_personalizada(nombre, moneda):
     """Configuracion base con las preferencias de la sesion aplicadas."""
     cfg = cargar_config()
     if nombre:
-        cfg.taller_nombre = nombre
+        cfg.negocio_nombre = nombre
     if moneda:
         cfg.moneda = moneda
     return cfg
@@ -28,10 +28,10 @@ def _config_personalizada(nombre, moneda):
 def obtener_config():
     """Configuracion global, aplicadas las preferencias de la sesion.
 
-    Los controles de la barra lateral guardan `taller_nombre` y `moneda` en
+    Los controles de la barra lateral guardan `negocio_nombre` y `moneda` en
     `st.session_state`; si no existen, se usa lo definido en `config.yaml`.
     """
-    nombre = st.session_state.get("taller_nombre") or None
+    nombre = st.session_state.get("negocio_nombre") or st.session_state.get("taller_nombre") or None
     moneda = st.session_state.get("moneda") or None
     return _config_personalizada(nombre, moneda)
 

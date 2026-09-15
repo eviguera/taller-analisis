@@ -35,7 +35,7 @@ def principal():
     )
 
     c.kpi_grid([
-        ("Servicios en catalogo", f"{n_servicios}", None, None, "Servicios ofrecidos por el taller"),
+        ("Servicios en catalogo", f"{n_servicios}", None, None, "Servicios ofrecidos por el negocio"),
         ("Ingresos por servicios", c.moneda(ingreso_total_serv, cfg.moneda), None,
          tendencia_ing, "Ingresos generados por servicios"),
         ("Ordenes con servicios", c.miles(n_fact_serv), None, None, "Facturas con servicios"),

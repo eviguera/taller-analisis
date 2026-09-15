@@ -9,7 +9,7 @@ from .data_loader import merge_datasets
 
 
 class Predictor:
-    """Modelos de prediccion para el taller mecanico."""
+    """Modelos de prediccion (ingresos, demanda, churn e inventario)."""
 
     def __init__(self, data):
         self.data = data

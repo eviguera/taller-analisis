@@ -1,9 +1,12 @@
 # ============================================================
-#  Configuracion central del Sistema de Analisis del Taller
+#  Configuracion central de GIRO - Inteligencia de negocio
+#  (analitica escalable para cualquier pyme; los datos de
+#  ejemplo son de un taller mecanico)
 # ============================================================
 
-taller:
-  nombre: "Taller Mecanico"
+negocio:
+  nombre: "Mi Taller Mecanico"
+  sector: "taller mecanico"
   moneda: "CLP"
 
 # Almacen escalable

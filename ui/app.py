@@ -1,7 +1,7 @@
-"""Interfaz web del Sistema de Analisis del Taller Mecanico (Streamlit).
+"""Interfaz web de GIRO, inteligencia de negocio (Streamlit).
 
 Router principal con st.navigation y barra lateral compartida: marca,
-navegacion, controles de personalizacion (taller y moneda) y pie de pagina.
+navegacion, controles de personalizacion (negocio y moneda) y pie de pagina.
 """
 
 import streamlit as st
@@ -12,8 +12,8 @@ from ui.pages import PAGINAS
 
 def main():
     st.set_page_config(
-        page_title="Analitica del Taller",
-        page_icon=":material/build:",
+        page_title="GIRO · Inteligencia de negocio",
+        page_icon=":material/donut_large:",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -24,8 +24,8 @@ def main():
     ]
 
     with st.sidebar:
-        st.markdown("#### :material/build_circle: Taller · Analitica")
-        st.caption("Sistema de inteligencia de negocio")
+        st.markdown("#### :material/donut_large: GIRO")
+        st.caption("Inteligencia de negocio")
 
     pg = st.navigation(paginas, position="sidebar", expanded=True)
 
@@ -34,9 +34,9 @@ def main():
         st.markdown("**Personalizar**")
         with st.container(border=True):
             nuevo_nombre = st.text_input(
-                "Nombre del taller",
-                value=cfg.taller_nombre,
-                key="inp_taller_nombre",
+                "Nombre del negocio",
+                value=cfg.negocio_nombre,
+                key="inp_negocio_nombre",
                 help="Se guarda durante la sesion. Persistelo en config/config.yaml.",
             )
             nueva_moneda = st.selectbox(
@@ -47,7 +47,7 @@ def main():
                 key="inp_moneda",
                 help="Formato de los importes en toda la app.",
             )
-        st.session_state["taller_nombre"] = (nuevo_nombre or "").strip() or "Taller Mecanico"
+        st.session_state["negocio_nombre"] = (nuevo_nombre or "").strip() or "Mi Negocio"
         st.session_state["moneda"] = nueva_moneda
         cfg = obtener_config()
 
@@ -56,7 +56,7 @@ def main():
         with st.container(border=True):
             st.markdown(
                 f":material/currency_exchange: Moneda **{cfg.moneda}**  \n"
-                f":material/factory: {cfg.taller_nombre}  \n"
+                f":material/factory: {cfg.negocio_nombre}  \n"
                 f":material/database: DuckDB + parquet"
             )
         st.space("small")
@@ -66,13 +66,13 @@ def main():
             st.cache_resource.clear()
             st.rerun()
         st.space("large")
-        st.caption("v1.3 · ETL + DuckDB + ML")
+        st.caption("v1.4 · ETL + DuckDB + ML")
 
     pg.run()
 
     st.space("medium")
     st.caption(":material/dataset: Datos procesados con ETL y almacenados en DuckDB. "
-               "Analitica y predicciones del taller mecanico.")
+               "Analitica y predicciones de tu negocio.")
 
 
 if __name__ == "__main__":

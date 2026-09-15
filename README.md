@@ -1,8 +1,13 @@
-# Sistema de Analisis de Datos para Taller Mecanico
+# GIRO - Inteligencia de negocio
 
-Sistema completo para obtener informacion valiosa de los datos de un taller mecanico:
-analisis de clientes, servicios, vehiculos, inventario y predicciones (ingresos,
-demanda, churn y reposicion de inventario).
+GIRO es una plataforma de analitica escalable para **cualquier pequena y mediana
+empresa**: convierte tus datos operativos (clientes, ventas, unidades, catalogo e
+inventario) en decisiones. Incluye analisis por cliente y por unidad, predicciones
+(ingresos, demanda, churn e inventario) e interoperabilidad con PSPP/SPSS.
+
+> Los datos de ejemplo son de un **taller mecanico** (50 clientes, 88 vehiculos,
+> 40 servicios, 350 facturas, 24 productos). El esquema de datos es el mismo para
+> cualquier negocio; cambia la configuracion en `config/config.yaml`.
 
 ## Requisitos
 

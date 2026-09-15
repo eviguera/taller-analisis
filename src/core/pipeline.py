@@ -1,4 +1,4 @@
-"""Pipeline ETL del taller: catalogo -> carga -> normalizacion -> almacen.
+"""Pipeline ETL: catalogo -> carga -> normalizacion -> almacen.
 
 Flujo tipico:
     1. `procesar_etl(cfg)` escanea el directorio de datos.

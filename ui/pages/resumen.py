@@ -56,7 +56,7 @@ def principal():
     with col_titulo:
         c.cabecera(
             "Resumen general",
-            f"{cfg.taller_nombre} · Panorama de ingresos, clientes y facturacion",
+            f"{cfg.negocio_nombre} · Panorama de ingresos, clientes y facturacion",
             icono=":material/dashboard:",
         )
     with col_filtros:

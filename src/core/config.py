@@ -21,10 +21,20 @@ class DatasetConfig:
 @dataclass
 class AppConfig:
     """Configuracion global del sistema."""
-    taller_nombre: str = "Taller Mecanico"
+    negocio_nombre: str = "Mi Negocio"
+    sector: str = ""                 # vertical de ejemplo (taller mecanico, retail, ...)
     moneda: str = "MXN"
     directorio_datos: Path = Path("data")
     db_path: Path = Path("data/almacen.duckdb")
     cache_dir: Path = Path("data/cache")
     usar_cache: bool = True
     datasets: Dict[str, DatasetConfig] = field(default_factory=dict)
+
+    # Compat: campo historico `taller_nombre` (se mantiene sincronizado).
+    @property
+    def taller_nombre(self) -> str:
+        return self.negocio_nombre
+
+    @taller_nombre.setter
+    def taller_nombre(self, valor: str):
+        self.negocio_nombre = valor
