@@ -120,10 +120,20 @@ def principal():
                         estado.update(label="ETL completado", state="complete", expanded=False)
                         st.success(f"ETL completado en {resultado.tiempo_carga}s. "
                                    f"Tablas registradas: {tabla_info}")
+                        c.kpi_grid([
+                            ("ETL total", f"{resultado.tiempo_carga}s", None, None,
+                             "Tiempo completo del pipeline (carga + esquema + vistas)"),
+                            ("Estructura DuckDB", f"{resultado.tiempo_estructura*1000:.0f} ms",
+                             None, None, "Materializacion del esquema core y vistas analitica"),
+                            ("Tablas core", f"{len(resultado.estructura)}", None, None,
+                             "Tablas normalizadas con claves primarias/foraneas"),
+                            ("Vistas analitica", f"{resultado.n_vistas}", None, None,
+                             "Modelos dimensionales listos para los paneles"),
+                        ])
                         if resultado.estructura:
                             st.caption(":material/hub: Esquema `core` normalizado con claves · "
                                        f"ha creado **{len(resultado.estructura)}** tablas y "
-                                       "vistas en `analitica`.")
+                                       f"**{resultado.n_vistas}** vistas en `analitica`.")
                     else:
                         estado.update(label="ETL termino con errores", state="error", expanded=True)
                         st.error("El ETL termino con errores:")

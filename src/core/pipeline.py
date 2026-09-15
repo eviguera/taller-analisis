@@ -20,6 +20,7 @@ from .catalog import escanear_directorio, vincular_archivos_a_datasets, ArchivoD
 from .config import AppConfig, DatasetConfig
 from ..loaders import get_loader, CargaResultado
 from ..storage import DataStore
+from ..storage.schema import VISTAS_ANALITICA
 
 log = logging.getLogger("taller.pipeline")
 
@@ -32,6 +33,8 @@ class ResultadoETL:
         self.archivos: List[ArchivoDetectado] = []
         self.asignaciones: Dict[str, Path] = {}
         self.tiempo_carga: float = 0.0
+        self.tiempo_estructura: float = 0.0
+        self.n_vistas: int = 0
 
     @property
     def ok(self) -> bool:
@@ -111,7 +114,10 @@ def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
     if store is not None:
         try:
             store.registrar_tablas(tablas)
+            t1 = time()
             resultado.estructura = store.construir_estructura(tablas)
+            resultado.tiempo_estructura = round(time() - t1, 3)
+            resultado.n_vistas = len(VISTAS_ANALITICA)
         finally:
             store.cerrar()
 
