@@ -6,6 +6,7 @@ navegacion, controles de personalizacion (negocio y moneda) y pie de pagina.
 
 import streamlit as st
 
+from ui import components as c
 from ui.context import obtener_config
 from ui.pages import PAGINAS
 
@@ -24,7 +25,11 @@ def main():
     ]
 
     with st.sidebar:
-        st.markdown("#### :material/donut_large: GIRO")
+        logo_html = c.logo_png()
+        if logo_html:
+            st.markdown(logo_html, unsafe_allow_html=True)
+        else:
+            st.markdown("#### :material/donut_large: GIRO")
         st.caption("Inteligencia de negocio")
 
     pg = st.navigation(paginas, position="sidebar", expanded=True)

@@ -62,6 +62,26 @@ def moneda(valor, moneda="MXN"):
     return f"{s}{miles(valor)}"
 
 
+def logo_png(ruta="ui/assets/GIRO.png", ancho=172):
+    """Muestra la imagen del logo en la sidebar (SVG/PNG via base64).
+
+    Usa `mix-blend-mode: multiply` para que el fondo blanco del PNG se funda
+    con el fondo de la sidebar (claro u oscuro) sin caja blanca.
+    """
+    import base64
+    from pathlib import Path
+
+    p = Path(__file__).resolve().parent.parent / ruta
+    if not p.exists():
+        return None
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    return (
+        f'<img src="data:image/png;base64,{b64}" alt="GIRO" '
+        f'style="width:{ancho}px;border-radius:10px;mix-blend-mode:multiply;'
+        f'display:block;margin:0 auto;">'
+    )
+
+
 def _es_oscuro() -> bool:
     try:
         return st.context.theme.type == "dark"
