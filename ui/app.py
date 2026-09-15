@@ -6,14 +6,13 @@ navegacion, controles de personalizacion (taller y moneda) y pie de pagina.
 
 import streamlit as st
 
-from ui import components as c
 from ui.context import obtener_config
 from ui.pages import PAGINAS
 
 
 def main():
     st.set_page_config(
-        page_title="DataTaller · Analitica del Taller",
+        page_title="Analitica del Taller",
         page_icon=":material/build:",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -25,12 +24,8 @@ def main():
     ]
 
     with st.sidebar:
-        st.markdown(
-            "<div style='display:flex;justify-content:center;padding:2px 0 6px;'>"
-            + c.logo(ancho=236)
-            + "</div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown("#### :material/build_circle: Taller · Analitica")
+        st.caption("Sistema de inteligencia de negocio")
 
     pg = st.navigation(paginas, position="sidebar", expanded=True)
 
