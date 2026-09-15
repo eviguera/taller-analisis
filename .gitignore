@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Datos derivados / cache (se regeneran al ejecutar el ETL)
+data/almacen.duckdb
+data/cache/
+data/export/
+
+# Reportes generados
+reports/
+
+# Secretos
+.streamlit/secrets.toml
+
+# Sistema
+.DS_Store
+*.log

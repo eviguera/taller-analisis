@@ -1,0 +1,101 @@
+# Tema del dashboard del Taller Mecanico.
+# Diseno sobrio y tecnologico con tonalidades suaves de azul, gris y verde.
+# Soporte nativo de modo claro y oscuro con contraste AA.
+
+[theme]
+base = "light"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+
+baseFontSize = 14
+baseFontWeight = 400
+headingFontSizes = ["30px", "22px", "18px", "16px", "14px", "12px"]
+headingFontWeights = [600, 600, 600, 500, 500, 500]
+linkUnderline = false
+baseRadius = "12px"
+buttonRadius = "10px"
+showWidgetBorder = true
+showSidebarBorder = true
+
+# ------------------------------------------------------------------
+# Modo claro: base blanca, grises pizarra, azul/green como acentos suaves
+# ------------------------------------------------------------------
+[theme.light]
+primaryColor = "#2563eb"              # azul principal (contraste AA con blanco)
+backgroundColor = "#fbfdff"            # fondo azulado muy suave
+secondaryBackgroundColor = "#f1f5f9"   # gris-azulado claro
+textColor = "#1e293b"                  # pizarra oscuro
+linkColor = "#2563eb"
+borderColor = "#dce3ee"                # borde gris-azul suave
+codeTextColor = "#1e293b"
+codeBackgroundColor = "#f1f5f9"
+
+greenColor = "#059669"
+redColor = "#dc2626"
+orangeColor = "#d97706"
+yellowColor = "#ca8a04"
+blueColor = "#2563eb"
+violetColor = "#7c3aed"
+grayColor = "#64748b"
+
+dataframeBorderColor = "#dce3ee"
+dataframeHeaderBackgroundColor = "#eef2f7"
+
+chartCategoricalColors = [
+    "#2563eb", "#0ea5e9", "#059669", "#16a34a",
+    "#3b82f6", "#10b981", "#64748b", "#94a3b8",
+]
+chartSequentialColors = [
+    "#eff6ff", "#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa",
+    "#3b82f6", "#2563eb", "#1d4ed8", "#1e40af", "#1e3a8a",
+]
+
+# Sidebar oscuro (look tecnologico de panel de control)
+[theme.light.sidebar]
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#e2e8f0"
+borderColor = "#334155"
+primaryColor = "#60a5fa"
+codeBackgroundColor = "#1e293b"
+
+# ------------------------------------------------------------------
+# Modo oscuro
+# ------------------------------------------------------------------
+[theme.dark]
+primaryColor = "#60a5fa"
+backgroundColor = "#0b1526"            # azul noche profundo
+secondaryBackgroundColor = "#16223a"
+textColor = "#dbe4f1"
+linkColor = "#60a5fa"
+borderColor = "#2a3a5a"
+codeTextColor = "#dbe4f1"
+codeBackgroundColor = "#16223a"
+
+greenColor = "#34d399"
+redColor = "#f87171"
+orangeColor = "#f59e0b"
+yellowColor = "#fbbf24"
+blueColor = "#60a5fa"
+violetColor = "#a78bfa"
+grayColor = "#8fa3c0"
+
+dataframeBorderColor = "#2a3a5a"
+dataframeHeaderBackgroundColor = "#16223a"
+
+chartCategoricalColors = [
+    "#60a5fa", "#38bdf8", "#34d399", "#4ade80",
+    "#93c5fd", "#2dd4bf", "#8fa3c0", "#94a3b8",
+]
+
+[theme.dark.sidebar]
+backgroundColor = "#0a1220"
+secondaryBackgroundColor = "#16223a"
+textColor = "#dbe4f1"
+borderColor = "#2a3a5a"
+primaryColor = "#60a5fa"
+codeBackgroundColor = "#16223a"
+
+[server]
+headless = true

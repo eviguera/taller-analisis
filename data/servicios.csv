@@ -1,0 +1,41 @@
+id,nombre,precio_base,tiempo_estimado_min
+1,Cambio de filtro de aire,368.97,20
+2,Cambio de correa,1711.15,70
+3,Cambio de bujias,616.5,35
+4,Cambio de llantas,1659.99,60
+5,Frenos traseros,2174.35,80
+6,Reparacion de turbo,4742.47,150
+7,Reparacion de motor,7323.66,240
+8,Reparacion de motor,8176.82,240
+9,Cambio de antifreeze,671.28,30
+10,Reparacion de turbo,3175.22,150
+11,Cambio de transmision,6526.56,180
+12,Revision de suspension,510.14,25
+13,Cambio de aceite de transmision,710.06,35
+14,Cambio de correa,1865.23,70
+15,Diagnostico computarizado,558.01,30
+16,Cambio de correa,1725.34,70
+17,Reparacion de electricidad,542.84,40
+18,Cambio de transmision,5001.21,180
+19,Diagnostico computarizado,483.04,30
+20,Reparacion de motor,9268.49,240
+21,Servicio de climatizacion,746.83,45
+22,Cambio de correa,2159.41,70
+23,Cambio de bateria,1742.32,45
+24,Cambio de aceite,869.94,45
+25,Limpieza de inyectores,833.98,50
+26,Reparacion de turbo,3142.65,150
+27,Frenos delanteros,2982.25,90
+28,Reparacion de motor,9456.15,240
+29,Alineacion y balance,536.63,40
+30,Revision de suspension,410.63,25
+31,Cambio de aceite,701.71,45
+32,Alineacion y balance,573.44,40
+33,Cambio de llantas,1532.42,60
+34,Cambio de correa,1653.41,70
+35,Reparacion de electricidad,622.69,40
+36,Cambio de bateria,1771.68,45
+37,Cambio de llantas,1598.95,60
+38,Limpieza de inyectores,831.82,50
+39,Cambio de aceite,818.7,45
+40,Cambio de aceite de transmision,764.25,35

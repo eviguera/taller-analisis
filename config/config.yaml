@@ -1,0 +1,60 @@
+# ============================================================
+#  Configuracion central del Sistema de Analisis del Taller
+# ============================================================
+
+taller:
+  nombre: "Taller Mecanico"
+  moneda: "CLP"
+
+# Almacen escalable
+almacen:
+  motor: "duckdb"
+  directorio_datos: "data"
+  db: "data/almacen.duckdb"
+  cache_dir: "data/cache"
+  usar_cache: true
+
+# ------------------------------------------------------------------
+#  Fuentes de datos.
+#  - `archivo`: nombre del archivo dentro de `directorio_datos`.
+#  - `formato`: auto (detecta por extension) | csv | excel | sav | zsav | por.
+#  - `fuentes_alternativas`: variantes que se probaran si falta el principal.
+#  - `hoja`: indice/nombre de la hoja si `formato: excel`.
+# ------------------------------------------------------------------
+fuentes:
+  clientes:
+    archivo: "clientes.csv"
+    formato: "auto"
+    descripcion: "Datos de clientes (CSV, Excel o .sav)"
+    fuentes_alternativas: ["clientes.sav", "clientes.xlsx"]
+  vehiculos:
+    archivo: "vehiculos.csv"
+    formato: "auto"
+    descripcion: "Vehiculos asociados a clientes"
+    fuentes_alternativas: ["vehiculos.sav", "vehiculos.xlsx"]
+  servicios:
+    archivo: "servicios.csv"
+    formato: "auto"
+    descripcion: "Catalogo de servicios y precios base"
+    fuentes_alternativas: ["servicios.sav", "servicios.xlsx"]
+  facturas:
+    archivo: "facturas.csv"
+    formato: "auto"
+    descripcion: "Facturas / ordenes de servicio"
+    fuentes_alternativas: ["facturas.sav", "facturas.xlsx"]
+  inventario:
+    archivo: "inventario.csv"
+    formato: "auto"
+    descripcion: "Inventario de repuestos"
+    fuentes_alternativas: ["inventario.sav", "inventario.xlsx"]
+
+# ------------------------------------------------------------------
+#  Mapeo de columnas (opcional): columna del archivo -> columna
+#  estandar que espera el analisis. Solo listar las que difieran.
+# ------------------------------------------------------------------
+mapeo_columnas:
+  # clientes:
+  #   "Nombre_Completo": "nombre"
+  #   "Clave": "id"
+  # facturas:
+  #   "Total_srv": "total"
