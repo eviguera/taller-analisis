@@ -15,8 +15,25 @@ from src.predictions import Predictor
 
 
 @st.cache_resource(show_spinner="Cargando configuracion...")
+def _config_personalizada(nombre, moneda):
+    """Configuracion base con las preferencias de la sesion aplicadas."""
+    cfg = cargar_config()
+    if nombre:
+        cfg.taller_nombre = nombre
+    if moneda:
+        cfg.moneda = moneda
+    return cfg
+
+
 def obtener_config():
-    return cargar_config()
+    """Configuracion global, aplicadas las preferencias de la sesion.
+
+    Los controles de la barra lateral guardan `taller_nombre` y `moneda` en
+    `st.session_state`; si no existen, se usa lo definido en `config.yaml`.
+    """
+    nombre = st.session_state.get("taller_nombre") or None
+    moneda = st.session_state.get("moneda") or None
+    return _config_personalizada(nombre, moneda)
 
 
 def cargar_datos(_cfg):

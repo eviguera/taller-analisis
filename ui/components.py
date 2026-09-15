@@ -62,6 +62,43 @@ def moneda(valor, moneda="MXN"):
     return f"{s}{miles(valor)}"
 
 
+def logo(ancho=260, mostrar_texto=True):
+    """Marca de la aplicacion como SVG inline (usa currentColor para textos).
+
+    Se adapta automaticamente al modo claro/oscuro del tema.
+    """
+    marca = ""
+    if mostrar_texto:
+        marca = f"""
+      <div style="line-height:1.05;">
+        <div style="font-size:17px;font-weight:800;letter-spacing:-0.3px;color:currentColor;">
+          Data<span style="color:#2563eb;">Taller</span>
+        </div>
+        <div style="font-size:9px;letter-spacing:2.2px;color:#64748b;margin-top:3px;font-weight:600;">
+          ANALITICA &bull; PYME &bull; ESCALABLE
+        </div>
+      </div>"""
+    return f"""
+    <div style="display:flex;align-items:center;gap:12px;width:{ancho}px;">
+      <svg width="46" height="46" viewBox="0 0 46 46" xmlns="http://www.w3.org/2000/svg"
+           style="flex:none;border-radius:13px;" role="img" aria-label="DataTaller">
+        <defs>
+          <linearGradient id="logodt" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#2563eb"/>
+            <stop offset="0.55" stop-color="#0ea5e9"/>
+            <stop offset="1" stop-color="#059669"/>
+          </linearGradient>
+        </defs>
+        <rect width="46" height="46" rx="11.5" fill="url(#logodt)"/>
+        <rect x="9.5" y="25" width="5.5" height="11" rx="2" fill="#ffffff" opacity="0.85"/>
+        <rect x="20.2" y="18.5" width="5.5" height="17.5" rx="2" fill="#ffffff" opacity="0.95"/>
+        <rect x="31" y="11" width="5.5" height="25" rx="2" fill="#ffffff"/>
+        <path d="M8.5 36 H37.5" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" opacity="0.5"/>
+      </svg>
+      {marca}
+    </div>"""
+
+
 def _es_oscuro() -> bool:
     try:
         return st.context.theme.type == "dark"

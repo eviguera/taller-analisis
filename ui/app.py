@@ -1,18 +1,19 @@
 """Interfaz web del Sistema de Analisis del Taller Mecanico (Streamlit).
 
 Router principal con st.navigation y barra lateral compartida: marca,
-navegacion, controles globales y pie de pagina.
+navegacion, controles de personalizacion (taller y moneda) y pie de pagina.
 """
 
 import streamlit as st
 
+from ui import components as c
 from ui.context import obtener_config
 from ui.pages import PAGINAS
 
 
 def main():
     st.set_page_config(
-        page_title="Analitica del Taller Mecanico",
+        page_title="DataTaller · Analitica del Taller",
         page_icon=":material/build:",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -24,13 +25,37 @@ def main():
     ]
 
     with st.sidebar:
-        st.markdown("#### :material/build_circle: Taller · Analitica")
-        st.caption("Sistema de inteligencia de negocio")
+        st.markdown(
+            "<div style='display:flex;justify-content:center;padding:2px 0 6px;'>"
+            + c.logo(ancho=236)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
 
     pg = st.navigation(paginas, position="sidebar", expanded=True)
 
     with st.sidebar:
         cfg = obtener_config()
+        st.markdown("**Personalizar**")
+        with st.container(border=True):
+            nuevo_nombre = st.text_input(
+                "Nombre del taller",
+                value=cfg.taller_nombre,
+                key="inp_taller_nombre",
+                help="Se guarda durante la sesion. Persistelo en config/config.yaml.",
+            )
+            nueva_moneda = st.selectbox(
+                "Moneda",
+                ["CLP", "MXN", "USD", "EUR", "COP"],
+                index=["CLP", "MXN", "USD", "EUR", "COP"].index(cfg.moneda)
+                if cfg.moneda in ["CLP", "MXN", "USD", "EUR", "COP"] else 0,
+                key="inp_moneda",
+                help="Formato de los importes en toda la app.",
+            )
+        st.session_state["taller_nombre"] = (nuevo_nombre or "").strip() or "Taller Mecanico"
+        st.session_state["moneda"] = nueva_moneda
+        cfg = obtener_config()
+
         st.space("medium")
         st.markdown("**Sistema**")
         with st.container(border=True):
@@ -46,7 +71,7 @@ def main():
             st.cache_resource.clear()
             st.rerun()
         st.space("large")
-        st.caption("v1.2 · ETL + DuckDB + ML")
+        st.caption("v1.3 · ETL + DuckDB + ML")
 
     pg.run()
 
