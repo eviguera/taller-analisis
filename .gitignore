@@ -9,6 +9,10 @@ venv/
 data/almacen.duckdb
 data/cache/
 data/export/
+data/models/
+
+# Workspaces multiempresa (datos por tenant)
+workspaces/
 
 # Reportes generados
 reports/

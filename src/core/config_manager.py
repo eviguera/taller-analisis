@@ -27,7 +27,9 @@ def cargar_config(ruta: Optional[Path] = None) -> AppConfig:
 
     negocio = (raw.get("negocio") or raw.get("taller") or {}) or {}
 
+    clave_ws = ruta.parent.parent.name if "workspaces" in str(ruta) else "principal"
     cfg = AppConfig(
+        clave=negocio.get("clave", clave_ws),
         negocio_nombre=negocio.get("nombre", "Mi Negocio"),
         sector=negocio.get("sector", ""),
         slogan=negocio.get("slogan", "Gira tus datos en resultados"),
@@ -35,6 +37,14 @@ def cargar_config(ruta: Optional[Path] = None) -> AppConfig:
         directorio_datos=base / raw.get("almacen", {}).get("directorio_datos", "data"),
         cache_dir=base / raw.get("almacen", {}).get("cache_dir", "data/cache"),
         usar_cache=raw.get("almacen", {}).get("usar_cache", True),
+        inventario=(raw.get("inventario") or raw.get("stock") or {}) or {},
+        mantenimiento=(raw.get("mantenimiento") or {}) or {},
+        alertas=(raw.get("alertas") or {}) or {},
+        tema=(raw.get("tema") or {}) or {},
+        whitelabel=(raw.get("whitelabel") or {}) or {},
+        simulador=(raw.get("simulador") or {}) or {},
+        conectores=[c for c in (raw.get("conectores") or []) if isinstance(c, dict)],
+        reportes=(raw.get("reportes") or {}) or {},
     )
     db = raw.get("almacen", {}).get("db", "data/almacen.duckdb")
     cfg.db_path = base / db
@@ -74,6 +84,7 @@ def guardar_config(cfg: AppConfig, ruta: Optional[Path] = None) -> Path:
             "slogan": cfg.slogan,
             "moneda": cfg.moneda,
         },
+        "tema": {k: v for k, v in (cfg.tema or {}).items() if isinstance(v, str) and v},
         "almacen": {
             "directorio_datos": "data",
             "db": "data/almacen.duckdb",
@@ -91,6 +102,10 @@ def guardar_config(cfg: AppConfig, ruta: Optional[Path] = None) -> Path:
             for n, d in cfg.datasets.items() if d.archivo
         },
         "mapeo_columnas": {n: d.mapeo for n, d in cfg.datasets.items() if d.mapeo},
+        "conectores": [c for c in (cfg.conectores or []) if isinstance(c, dict)],
+        "simulador": {k: v for k, v in (cfg.simulador or {}).items() if v},
+        "whitelabel": {k: v for k, v in (cfg.whitelabel or {}).items() if v},
+        "reportes": {k: v for k, v in (cfg.reportes or {}).items() if v},
     }
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with open(ruta, "w", encoding="utf-8") as f:

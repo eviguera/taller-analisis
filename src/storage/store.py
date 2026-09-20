@@ -54,6 +54,33 @@ class DataStore:
         for nombre, df in tablas.items():
             self.registrar_tabla(nombre, df)
 
+    def registrar_tabla_core(self, nombre: str, df: pd.DataFrame, con_claves: bool = True) -> str:
+        """Registra una tabla derivada en el esquema ``core`` con claves.
+
+        Util para los hechos relacionales (``factura_detalle``) construidos
+        por el pipeline y que no provienen de un archivo fuente. Si la carga
+        con claves falla (datos referencialmente imperfectos), reintenta sin
+        claves para no perder informacion.
+        """
+        nombre = self._nombre_valido(nombre)
+        clean = self._saneada(df)
+        self.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
+        errores = []
+        for claves in (con_claves, False):
+            try:
+                self.ejecutar(ddl_tabla_core(nombre, clean, con_claves=claves))
+                self._conn.register("__tmp_core", clean)
+                self._conn.execute(f'INSERT INTO core."{nombre}" SELECT * FROM __tmp_core')
+                self._conn.unregister("__tmp_core")
+                return nombre
+            except Exception as e:  # noqa: BLE001
+                try:
+                    self._conn.unregister("__tmp_core")
+                except Exception:  # noqa: BLE001
+                    pass
+                errores.append(str(e))
+        raise ValueError(f"No se pudo registrar core.{nombre}: " + " | ".join(errores))
+
     def consulta(self, sql: str) -> pd.DataFrame:
         return self._conn.execute(sql).fetchdf()
 
@@ -74,6 +101,8 @@ class DataStore:
         completo sin claves para no perder informacion.
         """
         self.ejecutar(SQL_ARRANQUE)
+        # Es dependiente (FK hacia facturas/clientes): se elimina primero.
+        self.ejecutar('DROP TABLE IF EXISTS core."factura_detalle" CASCADE')
         for nombre in reversed(ORDEN_CARGA):
             self.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
 
@@ -105,6 +134,13 @@ class DataStore:
                 self._conn.register("__tmp_core", df)
                 self._conn.execute(f'INSERT INTO core."{nombre}" SELECT * FROM __tmp_core')
                 self._conn.unregister("__tmp_core")
+
+        # Hechos relacionales: provienen de main."factura_detalle" (cargada
+        # por el pipeline). Se materializan en core tras las dimensiones para
+        # que sus claves foraneas sean validas y las vistas puedan leerlos.
+        if self.existe_tabla("factura_detalle"):
+            hechos = self.tabla("factura_detalle")
+            self.registrar_tabla_core("factura_detalle", hechos)
 
         for vista in VISTAS_ANALITICA.values():
             self.ejecutar(vista)

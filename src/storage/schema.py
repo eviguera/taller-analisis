@@ -44,6 +44,15 @@ ESPECIFICACIONES: Dict[str, Dict] = {
             ("vehiculo_id", "core.vehiculos(id)"),
         ],
     },
+    "factura_detalle": {
+        "pk": ["id"],
+        "fks": [
+            ("factura_id", "core.facturas(id)"),
+            ("servicio_id", "core.servicios(id)"),
+            ("cliente_id", "core.clientes(id)"),
+            ("vehiculo_id", "core.vehiculos(id)"),
+        ],
+    },
     "inventario": {
         "pk": ["id"],
         "fks": [],
@@ -175,6 +184,39 @@ VISTAS_ANALITICA: Dict[str, str] = {
         ON TRIM(t.det) <> ''
     LEFT JOIN core.servicios s
         ON TRY_CAST(split_part(t.det, ':', 1) AS BIGINT) = s."id";
+    """,
+
+    # ------- Hechos relacionales (Idea 1) ------------------------
+    # Materializados por el ETL como core.factura_detalle
+    "factura_detalle_desnormalizado": """
+    CREATE OR REPLACE VIEW analitica.factura_detalle_desnormalizado AS
+    SELECT d."factura_id",
+           d."fecha",
+           d."cliente_id",
+           c."nombre"     AS cliente,
+           d."vehiculo_id",
+           v."marca",
+           v."modelo",
+           v."placa",
+           d."servicio_id",
+           s."nombre"     AS servicio,
+           d."cantidad",
+           d."subtotal"
+    FROM core.factura_detalle d
+    LEFT JOIN core.clientes c      ON c."id" = d."cliente_id"
+    LEFT JOIN core.vehiculos v     ON v."id" = d."vehiculo_id"
+    LEFT JOIN core.servicios s     ON s."id" = d."servicio_id";
+    """,
+
+    "ingresos_por_servicio_mensual": """
+    CREATE OR REPLACE VIEW analitica.ingresos_por_servicio_mensual AS
+    SELECT d."servicio",
+           strftime(d."fecha", '%Y-%m') AS anio_mes,
+           round(SUM(d."subtotal"), 2)  AS ingresos,
+           SUM(d."cantidad")            AS unidades
+    FROM core.factura_detalle d
+    WHERE d."servicio_id" IS NOT NULL
+    GROUP BY 1, 2;
     """,
 
     "demanda_servicios_mensual": """

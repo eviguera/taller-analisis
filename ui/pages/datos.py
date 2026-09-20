@@ -33,9 +33,10 @@ def principal():
         icono=":material/database:",
     )
 
-    tab_importar, tab_etl, tab_esquema, tab_calidad, tab_pspp, tab_sql = st.tabs(
+    tab_importar, tab_etl, tab_esquema, tab_calidad, tab_pspp, tab_conectores, tab_sql = st.tabs(
         ["Importar / detectar", "Procesar (ETL)", "Esquema de datos",
-         "Calidad de datos", "Integracion PSPP/SPSS", "Consultas SQL"],
+         "Calidad de datos", "Integracion PSPP/SPSS", "Conectores ERP/SQL",
+         "Consultas SQL"],
         key="tabs_datos", on_change="rerun",
     )
 
@@ -134,6 +135,8 @@ def principal():
                             st.caption(":material/hub: Esquema `core` normalizado con claves · "
                                        f"ha creado **{len(resultado.estructura)}** tablas y "
                                        f"**{resultado.n_vistas}** vistas en `analitica`.")
+                        for nombre, adv in resultado.advertencias.items():
+                            st.warning(f":material/warning: **{nombre}**: {adv}")
                     else:
                         estado.update(label="ETL termino con errores", state="error", expanded=True)
                         st.error("El ETL termino con errores:")
@@ -333,6 +336,172 @@ de la pestana *Procesar (ETL)*.
             else:
                 st.info("No hay archivos .sav/.zsav/.por en el directorio de datos. "
                         "Sube uno o usa los de ejemplo (clientes.sav, facturas.sav).")
+
+    # ---------------------------------------------------------------
+    #  PESTAÑA: CONECTORES ERP/SQL (Fase 2)
+    # ---------------------------------------------------------------
+    with tab_conectores:
+        if tab_conectores.open:
+            from pathlib import Path as _Path
+
+            from src.core.conector_sql import (conectores_desde_snapshot,
+                                               crear_snapshot_erp,
+                                               escribir_conectores,
+                                               parsear_conectores,
+                                               sincronizar_conectores)
+
+            st.markdown("**Sincronizacion con origenes externos (ERP/SQL)**")
+            st.caption("GIRO puede poblar sus datasets desde otros motores: "
+                       "SQLite, DuckDB, CSV/Excel (archivo o URL). Los conectores "
+                       "se ejecutan con el ETL y con 'Sincronizar ahora'.")
+
+            configurados = parsear_conectores(cfg)
+            if configurados:
+                filas = []
+                for x in configurados:
+                    fuente = x.fuente
+                    if fuente and "://" not in str(fuente):
+                        existe = (_Path(cfg.directorio_datos) / str(fuente)).exists()
+                    else:
+                        existe = bool(fuente)
+                    filas.append({
+                        "Nombre": x.nombre, "Motor": x.motor, "Dataset": x.dataset,
+                        "Fuente": str(fuente or "(consulta)"), "Forzar": x.forzar,
+                        "Fuente presente": "OK" if existe else "NO",
+                    })
+                st.dataframe(pd.DataFrame(filas), width="stretch")
+
+                if st.button("Sincronizar conectores ahora", type="primary",
+                             icon=":material/sync:"):
+                    with st.status("Sincronizando conectores...", expanded=False) as estado:
+                        resumen = sincronizar_conectores(cfg)
+                        st.cache_data.clear()
+                        st.cache_resource.clear()
+                    ok = [r for r in resumen if r["ok"]]
+                    fallas = [r for r in resumen if not r["ok"]]
+                    estado.update(label=f"Sincronizados {len(ok)}/{len(resumen)}",
+                                  state="complete" if not fallas else "error",
+                                  expanded=False)
+                    for r in ok:
+                        st.write(f"- :material/check: **{r['nombre']}** -> {r['dataset']}: "
+                                 f"{c.miles(r['filas'])} filas")
+                    for r in fallas:
+                        st.warning(f":material/error: **{r['nombre']}**: {r['error']}")
+            else:
+                st.info("Aun no hay conectores configurados. Crea un snapshot "
+                        "demo o agrega uno a mano abajo.")
+
+            st.divider()
+            st.markdown("**Prueba rapida: snapshot SQLite (simula exportacion del ERP)**")
+            st.caption("Exporta tus datasets a un archivo SQLite (datos + metadatos "
+                       "de la exportacion) y luego conecta los datasets a el.")
+            col_ver, col_con = st.columns(2, vertical_alignment="bottom")
+            snapshot_ruta = _Path(cfg.directorio_datos) / "erp.sqlite"
+            with col_ver:
+                if st.button("1. Crear snapshot ERP (erp.sqlite)",
+                             icon=":material/database_upload:"):
+                    with st.status("Creando snapshot SQLite...", expanded=False) as estado:
+                        ruta, conteos = crear_snapshot_erp(cfg, snapshot_ruta)
+                    estado.update(label="Snapshot listo", state="complete", expanded=False)
+                    st.success(f"Snapshot creado: `{ruta}` "
+                               f"({len(conteos)} datasets, "
+                               f"{c.miles(sum(conteos.values()))} filas)")
+                    if conteos:
+                        st.dataframe(
+                            pd.DataFrame({"Dataset": list(conteos),
+                                          "Filas": list(conteos.values())}),
+                            width="stretch")
+            with col_con:
+                if st.button("2. Conectar datasets del snapshot", type="secondary",
+                             icon=":material/link:",
+                             disabled=not snapshot_ruta.exists()):
+                    con = conectores_desde_snapshot(cfg, snapshot_ruta)
+                    ruta, nuevos = escribir_conectores(cfg, con)
+                    st.success(
+                        f"Registrados **{len(nuevos)}** conectores en `{ruta}`. "
+                        "Usa 'Sincronizar ahora' o ejecuta el ETL para poblar DuckDB.")
+
+            st.divider()
+            st.markdown("**Agregar conector a mano**")
+            with st.form("form_conector", border=True):
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    nom_con = st.text_input("Nombre", placeholder="erp_facturas",
+                                            key="con_nombre")
+                    motor_con = st.selectbox(
+                        "Motor",
+                        ["sqlite", "duckdb", "csv", "excel", "url", "sql"],
+                        key="con_motor",
+                        help="'sql' conecta via SQLAlchemy (postgresql://, mysql:// "
+                             "o sqlite:/// con credenciales/DSN).")
+                with fc2:
+                    dataset_con = st.selectbox(
+                        "Dataset destino", list(cfg.datasets) + ["factura_detalle"],
+                        key="con_dataset")
+                    forzar_con = st.checkbox("Forzar (reemplaza la fuente local)",
+                                             value=False, key="con_forzar")
+                fuente_con = st.text_input(
+                    "Fuente (archivo relativo a data/, URL o DSN)",
+                    placeholder="erp.sqlite · postgresql://user:pass@host:5432/db",
+                    key="con_fuente")
+                consulta_con = st.text_area(
+                    "Consulta SQL (para sqlite/duckdb/sql)", height=70,
+                    placeholder="SELECT * FROM facturas", key="con_consulta")
+                enviar_con = st.form_submit_button("Registrar conector",
+                                                   type="primary", icon=":material/add:")
+                if enviar_con:
+                    if not nom_con.strip() or not dataset_con:
+                        st.error("Nombre y dataset son obligatorios.")
+                    else:
+                        nuevo = [{
+                            "nombre": nom_con.strip(),
+                            "motor": motor_con,
+                            "fuente": fuente_con.strip() or None,
+                            "consulta": consulta_con.strip() or None,
+                            "dataset": dataset_con,
+                            "forzar": forzar_con,
+                        }]
+                        ruta, nuevos = escribir_conectores(cfg, nuevo)
+                        st.success(f"Conector **{nom_con.strip()}** registrado en "
+                                   f"`{ruta.name}`. Sincroniza o ejecuta el ETL.")
+
+            st.divider()
+            st.markdown("**Warehouse central (multi-DB)**")
+            st.caption("Publica el almacen (datasets + capa core + vistas "
+                       "analiticas) hacia tu warehouse SQL: Postgres/Neon, "
+                       "MySQL, SQLite. Ideal para gobernanza de datos: GIRO "
+                       "calcula localmente y entrega tablas listas para BI.")
+            from src.core.warehouse import sincronizar as _wh_sync
+            from src.core.warehouse import ver as _wh_ver
+            wh_dsn = st.text_input(
+                "DSN destino (SQLAlchemy)",
+                placeholder="postgresql://user:pass@host:5432/warehouse · "
+                            "sqlite:///warehouse.sqlite",
+                key="wh_dsn")
+            wh_c1, wh_c2 = st.columns(2)
+            with wh_c1:
+                if st.button("Publicar en el warehouse", type="primary",
+                             icon=":material/cloud_upload:", disabled=not wh_dsn.strip()):
+                    with st.status("Publicando...", expanded=False) as wh_estado:
+                        try:
+                            publicados = _wh_sync(cfg, wh_dsn.strip())
+                            wh_estado.update(label=f"{len(publicados)} objetos publicados",
+                                             state="complete", expanded=False)
+                            st.dataframe(pd.DataFrame(publicados), width="stretch")
+                        except Exception as e:  # noqa: BLE001
+                            wh_estado.update(label="Fallo la publicacion", state="error")
+                            st.error(f"{type(e).__name__}: {e}")
+            with wh_c2:
+                if st.button("Ver tablas publicadas", icon=":material/database_search:",
+                             disabled=not wh_dsn.strip()):
+                    try:
+                        df_wh = _wh_ver(cfg, wh_dsn.strip())
+                        if df_wh.empty:
+                            st.info("No hay tablas GIRO en el warehouse destino.")
+                        else:
+                            st.dataframe(df_wh, width="stretch")
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"{type(e).__name__}: {e}")
 
     # ---------------------------------------------------------------
     #  PESTAÑA: CONSULTAS SQL

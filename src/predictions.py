@@ -1,20 +1,54 @@
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, root_mean_squared_error, accuracy_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 from .data_loader import merge_datasets
+from .core.config_manager import cargar_config
+from .core.hechos import construir_factura_detalle, demanda_producto_categoria
+from .model_registry import ModelRegistry
 
 
 class Predictor:
-    """Modelos de prediccion (ingresos, demanda, churn e inventario)."""
+    """Modelos de prediccion (ingresos, demanda, churn e inventario).
 
-    def __init__(self, data):
+    Los modelos pesados (churn, ingresos) se persisten en un registry
+    (data/models/) para no re-entrenarlos en cada sesion.
+    """
+
+    def __init__(self, data, cfg=None):
         self.data = data
+        self.cfg = cfg if cfg is not None else cargar_config()
         self.df = merge_datasets(data)
         self.df = self.df[self.df["estado"] != "Cancelada"].copy()
+
+    def _dir_modelos(self) -> str:
+        """Directorio de modelos del workspace actual (junto a la base DuckDB)."""
+        base = getattr(self.cfg, "db_path", Path("data/almacen.duckdb"))
+        return str(Path(base).parent / "models")
+
+    def _hechos(self):
+        """Cachea la tabla de hechos factura_detalle una vez por Predictor."""
+        if getattr(self, "_hechos_df", None) is None:
+            self._hechos_df = construir_factura_detalle(
+                self.data.get("facturas", pd.DataFrame()),
+                self.data.get("servicios", pd.DataFrame()),
+            )
+        return self._hechos_df
+
+    def _registro(self) -> ModelRegistry:
+        return ModelRegistry(self._dir_modelos())
+
+    def registro_modelos(self) -> list:
+        """Catalogo de modelos persistidos (para el panel de modelos)."""
+        return self._registro().listar()
+
+    def reentrenar(self, tipo: str):
+        """Elimina un modelo persistido para forzar reentrenamiento."""
+        self._registro().borrar(tipo)
 
     def feature_engineering(self, grupo):
         grupo = grupo.copy()
@@ -25,7 +59,7 @@ class Predictor:
             grupo["dia_semana"] = grupo["fecha"].dt.dayofweek
         return grupo
 
-    def predecir_ingresos(self, meses_futuros=6):
+    def predecir_ingresos(self, meses_futuros=6, usar_registro=True):
         """Prediccion de ingresos mensuales usando regresion con lags."""
         df = self.df.copy()
         serie = df.groupby(df["fecha"].dt.to_period("M"))["total"].sum().reset_index()
@@ -49,17 +83,38 @@ class Predictor:
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-        modelo = GradientBoostingRegressor(n_estimators=200, random_state=42, max_depth=3, learning_rate=0.1)
-        modelo.fit(X_train, y_train)
+        def _evaluar(m):
+            eva = {}
+            if len(X_test) > 0:
+                y_pred = m.predict(X_test)
+                eva = {
+                    "mae": round(mean_absolute_error(y_test, y_pred), 2),
+                    "rmse": round(root_mean_squared_error(y_test, y_pred), 2),
+                    "mape": round(float(np.mean(np.abs((y_test - y_pred) / y_test)) * 100), 2) if (np.abs(y_test).sum() > 0) else 0,
+                }
+            return eva
 
-        evaluacion = {}
-        if len(X_test) > 0:
-            y_pred = modelo.predict(X_test)
-            evaluacion = {
-                "mae": round(mean_absolute_error(y_test, y_pred), 2),
-                "rmse": round(root_mean_squared_error(y_test, y_pred), 2),
-                "mape": round(float(np.mean(np.abs((y_test - y_pred) / y_test)) * 100), 2) if (np.abs(y_test).sum() > 0) else 0,
-            }
+        n_muestras = len(modelo_df)
+        registro = None
+        if usar_registro:
+            reg = self._registro()
+            previo, meta = reg.cargar("ingresos")
+            if meta and meta.get("n_muestras") == n_muestras and previo is not None:
+                modelo = previo
+                evaluacion = dict(meta.get("evaluacion", {}))
+                evaluacion["fuente"] = "registro"
+                registro = meta
+            else:
+                modelo = GradientBoostingRegressor(n_estimators=200, random_state=42, max_depth=3, learning_rate=0.1)
+                modelo.fit(X_train, y_train)
+                evaluacion = _evaluar(modelo)
+                registro = reg.guardar("ingresos", modelo, {
+                    "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
+                })
+        else:
+            modelo = GradientBoostingRegressor(n_estimators=200, random_state=42, max_depth=3, learning_rate=0.1)
+            modelo.fit(X_train, y_train)
+            evaluacion = _evaluar(modelo)
 
         # Generar predicciones futuras paso a paso (avanzando un mes real por iteracion)
         predicciones = []
@@ -91,6 +146,7 @@ class Predictor:
             "evaluacion": evaluacion,
             "predicciones": pd.DataFrame(predicciones),
             "historial": serie[["anio_mes", "ingresos"]],
+            "registro": registro,
         }
 
     def predecir_demanda(self, horizonte_meses=6):
@@ -160,7 +216,7 @@ class Predictor:
             "tendencias": pd.DataFrame(info),
         }
 
-    def predecir_churn(self):
+    def predecir_churn(self, usar_registro=True):
         """Prediccion de churn de clientes usando RFM + Random Forest."""
         df = self.df.copy()
         hoy = df["fecha"].max()
@@ -188,83 +244,144 @@ class Predictor:
             evaluacion = {"nota": "Datos insuficientes para clasificador"}
             valor_rating = int(np.unique(y)[0])
             rfm["prob_churn"] = valor_rating
-            return {"modelo": "Basado en reglas", "evaluacion": evaluacion, "resultados": rfm}
+            return {"modelo": "Basado en reglas", "evaluacion": evaluacion,
+                    "resultados": rfm, "registro": None}
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y if len(np.unique(y)) > 1 else None)
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.3, random_state=42,
+            stratify=y if len(np.unique(y)) > 1 else None)
 
-        modelo = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
-        modelo.fit(X_train, y_train)
+        def _aplicar(m):
+            return m.predict_proba(X)[:, 1]
 
-        y_pred = modelo.predict(X_test)
-        y_proba = modelo.predict_proba(X)
+        def _metrica(m):
+            y_pred = m.predict(X_test)
+            importancias = sorted(zip(features, m.feature_importances_), key=lambda x: -x[1])
+            return {
+                "accuracy": round(accuracy_score(y_test, y_pred), 3),
+                "f1": round(f1_score(y_test, y_pred), 3),
+                "num_churn_detectado": int(y.sum()),
+                "tasa_churn": round(y.mean() * 100, 1),
+                "features_importantes": {f: round(v, 3) for f, v in importancias},
+            }
 
-        evaluacion = {
-            "accuracy": round(accuracy_score(y_test, y_pred), 3),
-            "f1": round(f1_score(y_test, y_pred), 3),
-            "num_churn_detectado": int(y.sum()),
-            "tasa_churn": round(y.mean() * 100, 1),
-        }
+        n_muestras = len(X)
+        registro = None
+        if usar_registro:
+            reg = self._registro()
+            previo, meta = reg.cargar("churn")
+            if previo is not None and meta and meta.get("n_muestras") == n_muestras:
+                modelo = previo
+                evaluacion = dict(meta.get("evaluacion", {}))
+                evaluacion["fuente"] = "registro"
+                registro = meta
+            else:
+                modelo = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
+                modelo.fit(X_train, y_train)
+                evaluacion = _metrica(modelo)
+                registro = reg.guardar("churn", modelo, {
+                    "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
+                })
+        else:
+            modelo = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
+            modelo.fit(X_train, y_train)
+            evaluacion = _metrica(modelo)
 
-        rfm["prob_churn"] = y_proba[:, 1]
-
-        importancias = sorted(zip(features, modelo.feature_importances_), key=lambda x: -x[1])
-        evaluacion["features_importantes"] = {f: round(v, 3) for f, v in importancias}
+        rfm["prob_churn"] = _aplicar(modelo)
 
         return {
             "modelo": "Random Forest",
             "evaluacion": evaluacion,
             "resultados": rfm.sort_values("prob_churn", ascending=False),
+            "registro": registro,
         }
 
     def predecir_inventario(self):
-        """Prediccion de rotacion y reaprovisionamiento de inventario."""
-        inv = self.data["inventario"].copy()
+        """Reposicion con demanda real derivada de los servicios vendidos.
 
-        # Demanda estimada por producto en base a facturas
-        facturas = self.df.copy()
+        Idea 1: la demanda ya no es una regla inventada. Se estima a partir de
+        la tabla de hechos (servicios vendidos por mes) mapeada a la categoria
+        de producto mediante ``inventario.mapeo_servicio_categoria``, y se
+        distribuye entre los productos de la categoria ponderando por su stock
+        minimo. Con eso se calculan rotacion, cobertura y cantidad a pedir.
+        """
+        inv = self.data.get("inventario", pd.DataFrame()).copy()
+        if inv.empty:
+            return pd.DataFrame(columns=["producto", "recomendacion"])
+
+        hechos = self._hechos()
+        inv_cfg = (self.cfg.inventario or {}) or {}
+        horizonte = int(inv_cfg.get("horizonte_meses", 3))
+        lead_time = float(inv_cfg.get("lead_time_meses", 1.5))
+        factor_seguridad = float(inv_cfg.get("factor_seguridad", 1.2))
+        mapeo = inv_cfg.get("mapeo_servicio_categoria", {}) or {}
+
+        demanda_cat = demanda_producto_categoria(
+            hechos, mapeo, horizonte_meses=horizonte)
+
+        # Demanda por producto: repartir la demanda de la categoria ponderando
+        # por stock minimo (los productos con mayor stock minimo rotan mas).
+        cat_demanda = {}
+        peso_por_producto = {}
+        if not demanda_cat.empty:
+            cat_demanda = {
+                r["categoria"]: float(r["demanda_mensual"])
+                for _, r in demanda_cat.iterrows()}
+            for cat, _demanda in cat_demanda.items():
+                grupo = inv[inv.get("categoria") == cat]
+                if grupo.empty:
+                    continue
+                pesos = (grupo["stock_minimo"].fillna(0) + 1)
+                total = float(pesos.sum()) or 1.0
+                for pid, w in zip(grupo["id"], pesos / total):
+                    peso_por_producto[str(pid)] = float(w)
+
+        hoy = pd.Timestamp.today()
         resultados = []
+
         for _, row in inv.iterrows():
-            producto_id = row["id"]
-            stock = row["stock_actual"]
-            stock_min = row["stock_minimo"]
-            venta = row["precio_venta"]
-            costo = row["precio_costo"]
+            producto_id = str(row["id"])
+            stock = float(row.get("stock_actual", 0) or 0)
+            stock_min = float(row.get("stock_minimo", 0) or 0)
+            venta = row.get("precio_venta", 0) or 0
+            costo = row.get("precio_costo", 0) or 0
+            categoria = str(row.get("categoria", "") or "")
 
-            # Buscar si el producto aparece en detalles de facturas
-            demanda = 0
-            for det in facturas["detalles"].dropna():
-                # Los detalles son IDs de servicios, no de productos;
-                # estimamos demanda via una regla proporcional al stock/min_stock
-                pass
+            # Demanda mensual estimada de ESTE producto
+            demanda_mes = 0.0
+            if categoria in cat_demanda:
+                demanda_mes = cat_demanda[categoria] * peso_por_producto.get(producto_id, 0.0)
 
-            # Regla simple: estimacion basada en rotacion implicita
-            falta_datos = stock <= 0
-            tasa_rotacion = np.clip((stock_min + 2) / max(stock, 1), 0.1, 3.0)
-            demanda_estimada_mes = tasa_rotacion if stock > 0 else 0
-
-            meses_cobertura = stock / demanda_estimada_mes if demanda_estimada_mes > 0 else 0
-            dias_problema = (stock - stock_min) / demanda_estimada_mes if demanda_estimada_mes > 0 else 999
-
-            recomendacion = "Reabastecer" if stock <= stock_min else (
-                "Vigilar" if stock <= stock_min * 1.5 else "Suficiente"
+            stock_objetivo = stock_min + max(0.0, demanda_mes) * lead_time * factor_seguridad
+            meses_cobertura = (stock / demanda_mes) if demanda_mes > 0 else (999 if stock > 0 else 0)
+            falta_stock = stock < stock_objetivo
+            recomendacion = (
+                "Reabastecer" if stock <= stock_min else
+                ("Vigilar" if falta_stock else "Suficiente")
             )
+            cantidad_recomendada = max(0, int(np.ceil(stock_objetivo - stock)))
 
             resultados.append({
                 "id": producto_id,
                 "producto": row["producto"],
-                "categoria": row["categoria"],
+                "categoria": str(categoria),
                 "stock_actual": stock,
                 "stock_minimo": stock_min,
-                "tasa_rotacion_mensual": round(demanda_estimada_mes, 2),
-                "meses_cobertura": round(meses_cobertura, 1),
+                "demanda_mensual": round(demanda_mes, 2),
+                "tasa_rotacion_mensual": round(demanda_mes, 2),
+                "stock_objetivo": round(stock_objetivo, 1),
+                "meses_cobertura": round(min(meses_cobertura, 999), 1),
+                "cantidad_recomendada": cantidad_recomendada,
                 "recomendacion": recomendacion,
                 "valor_stock": round(stock * costo, 2),
-                "margen_unitario": round(row["precio_venta"] - row["precio_costo"], 2),
+                "margen_unitario": round(venta - costo, 2),
             })
 
         pred = pd.DataFrame(resultados)
-        pred["fecha_recomendada"] = pd.Timestamp.today().strftime("%Y-%m-%d")
-        return pred.sort_values("recomendacion", key=lambda s: s.map({"Reabastecer": 0, "Vigilar": 1, "Suficiente": 2}))
+        pred["fecha_recomendada"] = hoy.strftime("%Y-%m-%d")
+        orden = {"Reabastecer": 0, "Vigilar": 1, "Suficiente": 2}
+        return pred.sort_values(
+            "recomendacion", key=lambda s: s.map(orden))
 
     def proxima_factura_demanda(self):
         """Recomendaciones de servicios para proxima visita sugerida."""

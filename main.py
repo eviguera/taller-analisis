@@ -7,7 +7,17 @@ Uso:
     python main.py predict [--tipo ingresos|demanda|churn|inventario|todos] [--meses N]
     python main.py importar <archivo> [--formato auto] [--dataset CLIENTES]
     python main.py exportar [--dataset TODOS] [--formato sav|csv]
+    python main.py alertas [--reporte] [--enviar-email]
+    python main.py workspace crear <clave> [--nombre ...] [--moneda ...] [--muestra]
+    python main.py workspace listar
+    python main.py workspace config <clave>
+    python main.py conector listar|sincronizar|seed-erp [--data DIR] [--usar]
+    python main.py warehouse sync|ver --dsn DSN [--esquemas ...] [--prefijo giro_]
+    python main.py reporte listar
+    python main.py reporte generar [--tipo resumen|ventas|clientes|inventario|predicciones|todos]
+                                   [--periodo ...] [--pdf] [--enviar-email] [--abrir]
     python main.py dashboard
+    python main.py landing [--port 8501]
 """
 
 import argparse
@@ -16,9 +26,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.core.config_manager import cargar_config
 from src.core.pipeline import procesar_etl, load_all
 from src.core.catalog import escanear_directorio, clasificar_archivo
+from src.storage.schema import VISTAS_ANALITICA
 from src.data_loader import get_data_summary
 from src.analyzer import Analyzer
 from src.predictions import Predictor
@@ -28,7 +38,8 @@ BASE_DIR = Path(__file__).parent
 
 
 def _config(args):
-    cfg = cargar_config()
+    from src import workspaces as ws
+    cfg = ws.config_actual()
     if getattr(args, "data", None):
         cfg.directorio_datos = Path(args.data)
     return cfg
@@ -91,7 +102,7 @@ def cmd_etl(args):
 def cmd_report(args):
     data, cfg = cmd_resumen(args)
     print("\n\nGenerando reporte HTML...")
-    ruta, contenido = ReportGenerator(data).generar(args.output)
+    ruta, contenido = ReportGenerator(data, cfg=cfg).generar(args.output)
     print(f"Reporte generado en: {ruta}")
     if args.abrir:
         os.system(f"open '{ruta}'")
@@ -100,7 +111,7 @@ def cmd_report(args):
 def cmd_predict(args):
     cfg = _config(args)
     data = load_all(cfg)
-    predictor = Predictor(data)
+    predictor = Predictor(data, cfg=cfg)
     tipos = args.tipo.split(",") if "," in args.tipo else [args.tipo]
     if "todos" in tipos:
         tipos = ["ingresos", "demanda", "churn", "inventario"]
@@ -171,7 +182,8 @@ def cmd_importar(args):
 def cmd_exportar(args):
     cfg = _config(args)
     data = load_all(cfg)
-    if args.dataset and args.dataset.lower() not in ("todos", "all"):
+    todos = args.dataset and args.dataset.lower() in ("todos", "all")
+    if not todos:
         datasets_sel = {args.dataset.lower(): data.get(args.dataset.lower(), None)}
     else:
         datasets_sel = data
@@ -181,23 +193,257 @@ def cmd_exportar(args):
     for nombre, df in datasets_sel.items():
         if df is None or (hasattr(df, "empty") and df.empty):
             continue
-        if args.formato == "sav":
-            from src.loaders.pspp_loader import exportar_sav
-            exportar_sav(df, out / f"{nombre}.sav", label_archivo=f"{nombre} exportado")
-            print(f"  {nombre}.sav -> {out}")
-        elif args.formato == "por":
-            from src.loaders.pspp_loader import exportar_por
-            exportar_por(df, out / f"{nombre}.por")
-            print(f"  {nombre}.por -> {out}")
+        _exportar_archivo(df, out / nombre, args.formato)
+
+    # Vista analitica del almacen DuckDB (Idea 1): ademas de los datasets,
+    # se exportan las agregaciones consumidas por los paneles.
+    if todos:
+        try:
+            from src.storage.store import DataStore
+            store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=False)
+            try:
+                for vista in VISTAS_ANALITICA:
+                    try:
+                        df = store.consultar_vista(vista)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if df is None or df.empty:
+                        continue
+                    _exportar_archivo(df, out / f"analitica_{vista}", args.formato)
+            finally:
+                store.cerrar()
+        except Exception as e:  # noqa: BLE001
+            print(f"  (vistas analiticas no exportadas: {e})")
+
+
+def _exportar_archivo(df, ruta_base: Path, formato: str):
+    out = ruta_base
+    if formato == "sav":
+        from src.loaders.pspp_loader import exportar_sav
+        destino = Path(str(out) + ".sav")
+        exportar_sav(df, destino, label_archivo=f"{out.name} exportado")
+        print(f"  {out.name}.sav")
+    elif formato == "por":
+        from src.loaders.pspp_loader import exportar_por
+        destino = Path(str(out) + ".por")
+        exportar_por(df, destino)
+        print(f"  {out.name}.por")
+    else:
+        destino = Path(str(out) + ".csv")
+        df.to_csv(destino, index=False, encoding="utf-8-sig")
+        print(f"  {out.name}.csv")
+
+
+def cmd_conector(args):
+    from src.core.conector_sql import (conectores_desde_snapshot, crear_snapshot_erp,
+                                       escribir_conectores, parsear_conectores,
+                                       sincronizar_conectores)
+    cfg = _config(args)
+
+    if args.accion == "listar":
+        conectores = parsear_conectores(cfg)
+        if not conectores:
+            print("Sin conectores configurados en este workspace.")
+            print("Prueba: python main.py conector seed-erp --usar")
+            return 0
+        print(f"Conectores de [{cfg.clave}] ({len(conectores)}):")
+        for c in conectores:
+            fuente = c.fuente
+            existe = False
+            if fuente and "://" in str(fuente):
+                existe = True
+            elif fuente:
+                existe = (cfg.directorio_datos / str(fuente)).exists()
+            estado = "OK" if existe else "fuente no encontrada"
+            forzar = "  [forzar]" if c.forzar else ""
+            print(f"  - {c.nombre}: {c.motor} -> {c.dataset} ({estado}){forzar}")
+        return 0
+
+    if args.accion == "sincronizar":
+        print(f"Sincronizando conectores de [{cfg.clave}]...")
+        resumen = sincronizar_conectores(cfg)
+        ok = [r for r in resumen if r["ok"]]
+        fallas = [r for r in resumen if not r["ok"]]
+        for r in ok:
+            print(f"  - {r['nombre']}: {_formato(r['filas'])} filas -> {r['dataset']}")
+        for r in fallas:
+            print(f"  - {r['nombre']}: FALLO ({r['error']})")
+        print(f"\nOK ({len(ok)}/{len(resumen)})" if not fallas
+              else f"\nCOMPLETADO CON ERRORES ({len(fallas)}/{len(resumen)})")
+        return 0 if not fallas else 1
+
+    if args.accion == "seed-erp":
+        destino = Path(args.destino) if args.destino else cfg.directorio_datos / "erp.sqlite"
+        print(f"Creando snapshot SQLite (simula exportacion del ERP)...")
+        ruta, conteos = crear_snapshot_erp(cfg, destino)
+        print(f"Snapshot creado: {ruta}")
+        for nombre, n in conteos.items():
+            print(f"  - {nombre}: {_formato(n)} filas")
+        if args.usar:
+            conectores = conectores_desde_snapshot(cfg, ruta)
+            ruta_cfg, nuevos = escribir_conectores(cfg, conectores)
+            print(f"\nRegistrados {len(nuevos)} conectores (forzar=true) en {ruta_cfg}")
+            print("Ejecuta 'python main.py conector sincronizar' o 'python main.py etl' "
+                  "para poblar DuckDB desde la BD del ERP.")
         else:
-            df.to_csv(out / f"{nombre}.csv", index=False, encoding="utf-8-sig")
-            print(f"  {nombre}.csv -> {out}")
+            print("\nUsa '--usar' para registrar los conectores en el config "
+                  "(forzar=true) y sincronizar.")
+        return 0
 
 
 def cmd_dashboard(args):
     print("Iniciando dashboard web (Streamlit)...")
     cmd = [sys.executable, "-m", "streamlit", "run", str(BASE_DIR / "dashboard.py")]
     subprocess.run(cmd)
+
+
+def cmd_landing(args):
+    print("Iniciando landing publica (Streamlit)...")
+    cmd = [sys.executable, "-m", "streamlit", "run", str(BASE_DIR / "landing.py"),
+           "--server.port", str(args.port)]
+    subprocess.run(cmd)
+
+
+def cmd_alertas(args):
+    from src.alerts import evaluar_alertas, resumen_alertas, generar_reporte_alertas, enviar_email
+
+    cfg = _config(args)
+    data = load_all(cfg)
+    alertas = evaluar_alertas(cfg, data)
+    res = resumen_alertas(alertas)
+
+    print("=" * 70)
+    print("ALERTAS DE NEGOCIO")
+    print("=" * 70)
+    print(f"Total: {res['total']} · Criticas: {res['critica']} · Medias: {res['media']} · Bajas: {res['baja']}")
+    print(f"Por tipo: {', '.join(f'{k}={v}' for k, v in res['por_tipo'].items()) or 'sin reglas disparadas'}")
+    if not alertas:
+        print("\nSin alertas activas.")
+    for a in alertas:
+        print(f"\n[{a['severidad'].upper()}] {a['titulo']}")
+        print(f"    {a['detalle']}")
+
+    if args.reporte:
+        ruta = generar_reporte_alertas(cfg, data, alertas)
+        print(f"\nReporte generado en: {ruta}")
+    if args.enviar_email:
+        cuerpo = "<ul>" + "".join(
+            f"<li><b>{a['titulo']}</b><br>{a['detalle']}</li>" for a in alertas) + "</ul>"
+        if enviar_email(cfg, f"[GIRO] Alertas de {cfg.negocio_nombre}", cuerpo):
+            print("Alertas enviadas por email.")
+        else:
+            print("SMTP no configurado; alertas no enviadas.")
+
+
+def cmd_reporte(args):
+    """Genera reportes ejecutivos white-label (automatizables via cron)."""
+    from src.reporting import catalogo, por_clave
+    from src.reporting.engine import GeneradorReportes, listar_generados
+
+    cfg = _config(args)
+    data = load_all(cfg)
+    gen = GeneradorReportes(cfg, data)
+
+    if args.accion == "listar":
+        print(f"Reportes disponibles para [{cfg.negocio_nombre}] "
+              f"({cfg.clave}):")
+        for r in catalogo.REPORTES:
+            print(f"  - {r['clave']:<12} {r['titulo']}")
+            print(f"      {r['descripcion']}")
+        generados = listar_generados(cfg)
+        print(f"\nGenerados en reports/ ({len(generados)}):")
+        for g in generados:
+            print(f"  - [{g['tipo']}] {g['nombre']}")
+        if not generados:
+            print("  (aun no hay reportes; usa 'python main.py reporte generar')")
+        return 0
+
+    ocasion = args.periodo or ""
+    if args.tipo == catalogo.TODOS:
+        resultados = gen.generar_todos(ocasion_label=ocasion)
+        total = len(resultados)
+        print(f"Reportes generados para [{cfg.negocio_nombre}] "
+              f"({cfg.clave}):")
+        for meta in resultados:
+            print(f"  - {meta['tipo']:<12} {meta['archivo']}")
+        return 0 if total else 1
+
+    if por_clave(args.tipo) is None:
+        print(f"Tipo desconocido: {args.tipo}. Usa {catalogo.tipos_hint()}.")
+        return 1
+
+    ruta, meta = gen.generar(args.tipo, ocasion_label=ocasion,
+                             base_filename=args.output)
+    print(f"Reporte generado: {ruta}")
+    print(f"  tipo: {meta['tipo']} · insights: {meta['num_insights']}")
+    if args.pdf:
+        ruta_pdf = gen.a_pdf(ruta)
+        if ruta_pdf:
+            print(f"  PDF : {ruta_pdf}")
+        else:
+            print("  (PDF omitido: instala weasyprint para generarlo)")
+    if args.enviar_email:
+        asunto = f"[GIRO] {meta['titulo']} · {cfg.negocio_nombre}"
+        cuerpo = open(ruta, encoding="utf-8").read()
+        if gen.enviar_email(asunto, cuerpo):
+            print("  Enviado por email (SMTP).")
+        else:
+            print("  Email no enviado (SMTP no configurado).")
+    if args.abrir:
+        os.system(f"open '{ruta}'")
+
+
+def cmd_workspace(args):
+    from src import workspaces as ws
+
+    if args.accion == "crear":
+        cfg = ws.crear_workspace(
+            args.clave, nombre=args.nombre, moneda=args.moneda,
+            slogan=args.slogan, sector=args.sector, con_datos_muestra=args.muestra)
+        print(f"Workspace '{cfg.clave}' creado:")
+        print(f"  nombre: {cfg.negocio_nombre} · sector: {cfg.sector} · moneda: {cfg.moneda}")
+        print(f"  datos: {cfg.directorio_datos}")
+        print(f"  almacen: {cfg.db_path}")
+    elif args.accion == "listar":
+        lista = ws.listar_workspaces()
+        print(f"Workspaces ({len(lista)}):")
+        for clave in lista or ["(sin workspaces creados)"]:
+            print(f"  - {clave}")
+    elif args.accion == "config":
+        try:
+            cfg = ws.config_workspace(args.clave)
+            print(f"[{cfg.clave}] {cfg.negocio_nombre} · {cfg.sector} · {cfg.moneda}")
+            print(f"  datos: {cfg.directorio_datos} · almacen: {cfg.db_path}")
+            print(f"  inventario: horizonte={cfg.inventario.get('horizonte_meses')}m, "
+                  f"lead={cfg.inventario.get('lead_time_meses')}m, "
+                  f"{len(cfg.inventario.get('mapeo_servicio_categoria') or {})} mapeos")
+            print(f"  mantenimiento: {len(cfg.mantenimiento.get('intervalos_meses') or {})} intervalos")
+            print(f"  alertas: {len([k for k, v in cfg.alertas.items() if k != 'smtp' and v])} reglas activas")
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            raise SystemExit(1)
+
+
+def cmd_warehouse(args):
+    """Publica el almacen DuckDB hacia un warehouse SQL externo (multi-DB)."""
+    from src.core.warehouse import sincronizar, ver
+    cfg = _config(args)
+
+    if args.accion == "sync":
+        esquemas = tuple(e.strip() for e in (args.esquemas or "datasets,core,analitica").split(","))
+        publicados = sincronizar(cfg, args.dsn, esquemas=esquemas, prefijo=args.prefijo)
+        print(f"Publicados {len(publicados)} objetos al warehouse ({args.dsn}):")
+        print(f"  {'esquema':<10} {'origen':<24} {'tabla':<30} {'filas':>8}")
+        for p in publicados:
+            print(f"  {p['esquema']:<10} {p['origen']:<24} {p['tabla']:<30} {p['filas']:>8}")
+        if not publicados:
+            print("  (nada que publicar)")
+    elif args.accion == "ver":
+        df = ver(cfg, args.dsn, prefijo=args.prefijo)
+        if df.empty:
+            print("No hay objetos GIRO en el warehouse.")
+        else:
+            print(df.to_string(index=False))
 
 
 def main():
@@ -238,9 +484,81 @@ def main():
     px.add_argument("--formato", type=str, default="csv", choices=["csv", "sav", "por"])
     px.set_defaults(func=cmd_exportar)
 
+    pa = subparsers.add_parser("alertas", help="Evalua las reglas de negocio y genera reporte")
+    pa.add_argument("--data", type=str, default=None)
+    pa.add_argument("--reporte", action="store_true", help="Genera HTML en reports/")
+    pa.add_argument("--enviar-email", action="store_true", help="Envia por SMTP si esta configurado")
+    pa.set_defaults(func=cmd_alertas)
+
+    pw = subparsers.add_parser("workspace", help="Gestion de workspaces (multiempresa)")
+    pw_sub = pw.add_subparsers(dest="accion", required=True)
+    pw_c = pw_sub.add_parser("crear", help="Crea un workspace")
+    pw_c.add_argument("clave", type=str)
+    pw_c.add_argument("--nombre", type=str, default=None)
+    pw_c.add_argument("--moneda", type=str, default=None)
+    pw_c.add_argument("--slogan", type=str, default=None)
+    pw_c.add_argument("--sector", type=str, default=None,
+                     help="Vertical: taller | clinica | retail | logistica")
+    pw_c.add_argument("--muestra", action="store_true", help="Copiar datos de ejemplo")
+    pw_c.set_defaults(func=cmd_workspace)
+    pw_l = pw_sub.add_parser("listar", help="Lista los workspaces")
+    pw_l.set_defaults(func=cmd_workspace)
+    pw_f = pw_sub.add_parser("config", help="Muestra la configuracion de un workspace")
+    pw_f.add_argument("clave", type=str)
+    pw_f.set_defaults(func=cmd_workspace)
+
     pd = subparsers.add_parser("dashboard", help="Inicia el dashboard web")
     pd.add_argument("--data", type=str, default=None)
     pd.set_defaults(func=cmd_dashboard)
+
+    pcon = subparsers.add_parser(
+        "conector", help="Conectores ERP/SQL (sqlite, duckdb, csv, excel, url)")
+    pcon.add_argument("accion", choices=["listar", "sincronizar", "seed-erp"],
+                      help="listar: muestra los configurados · sincronizar: trae "
+                           "datos al almacen · seed-erp: crea un snapshot SQLite demo")
+    pcon.add_argument("--data", type=str, default=None)
+    pcon.add_argument("--destino", type=str, default=None,
+                      help="Ruta del snapshot (por defecto data/erp.sqlite)")
+    pcon.add_argument("--usar", action="store_true",
+                      help="seed-erp: registra los conectores en el config (forzar=true)")
+    pcon.set_defaults(func=cmd_conector)
+
+    pl = subparsers.add_parser("landing", help="Inicia la landing publica de ventas")
+    pl.add_argument("--port", type=int, default=8502)
+    pl.set_defaults(func=cmd_landing)
+
+    pwh = subparsers.add_parser(
+        "warehouse", help="Warehouse central (multi-DB): publica DuckDB a Postgres/MySQL/SQLite")
+    pwh.add_argument("accion", choices=["sync", "ver"])
+    pwh.add_argument("--dsn", type=str, required=True,
+                     help="DSN SQLAlchemy del destino (postgresql://…, mysql://…, sqlite:///…)")
+    pwh.add_argument("--esquemas", type=str, default="datasets,core,analitica")
+    pwh.add_argument("--prefijo", type=str, default="giro_",
+                     help="Prefijo de las tablas publicadas (default: giro_)")
+    pwh.add_argument("--data", type=str, default=None)
+    pwh.set_defaults(func=cmd_warehouse)
+
+    prpt = subparsers.add_parser(
+        "reporte", help="Reportes ejecutivos white-label (reventa)")
+    prpt_sub = prpt.add_subparsers(dest="accion", required=True)
+    prpt_l = prpt_sub.add_parser("listar", help="Tipos disponibles y generados")
+    prpt_l.add_argument("--data", type=str, default=None)
+    prpt_l.set_defaults(func=cmd_reporte)
+    prpt_g = prpt_sub.add_parser(
+        "generar", help="Genera reportes (resumen|ventas|clientes|inventario|predicciones|todos)")
+    prpt_g.add_argument("--data", type=str, default=None)
+    prpt_g.add_argument("--tipo", type=str, default="resumen",
+                        help="Tipo de reporte o 'todos' (default: resumen)")
+    prpt_g.add_argument("--periodo", type=str, default="",
+                        help="Rotulo de portada, p. ej. 'Reporte mensual'")
+    prpt_g.add_argument("--output", type=str, default=None,
+                        help="Nombre del archivo HTML (opcional)")
+    prpt_g.add_argument("--pdf", action="store_true",
+                        help="Convierte a PDF si weasyprint esta instalado")
+    prpt_g.add_argument("--enviar-email", action="store_true",
+                        help="Envia por SMTP si esta configurado")
+    prpt_g.add_argument("--abrir", action="store_true", help="Abre el reporte")
+    prpt_g.set_defaults(func=cmd_reporte)
 
     args = parser.parse_args()
     args.func(args)

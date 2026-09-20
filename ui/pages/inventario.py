@@ -98,10 +98,13 @@ def principal():
                 st.warning(f"{len(faltan)} producto(s) requieren reabastecimiento inmediato.",
                            icon=":material/priority_high:")
                 st.dataframe(
-                    faltan[["producto", "categoria", "stock_actual", "stock_minimo", "meses_cobertura"]],
+                    faltan[["producto", "categoria", "stock_actual", "stock_minimo",
+                            "demanda_mensual", "meses_cobertura", "cantidad_recomendada"]],
                     width="stretch",
                     column_config={
+                        "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
                         "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
+                        "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
                     },
                 )
             else:
