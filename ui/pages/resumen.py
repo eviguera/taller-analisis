@@ -40,33 +40,6 @@ def _nunique(df, columna):
     return df[columna].nunique() if columna in df.columns else 0
 
 
-def _serie_mensual_contexto(df):
-    """Serie mensual global desde la vista DuckDB (con respaldo pandas).
-
-    Idea 1: la UI consume las agregaciones del almacen analitico en lugar de
-    recalcular todo en memoria por cada interaccion.
-    """
-    try:
-        from ui.context import consultar_vista
-        v = consultar_vista("ingresos_mensuales").tail(8)
-        if not v.empty and "anio_mes" in v.columns and "ingresos" in v.columns:
-            mensual = pd.DataFrame({
-                "anio_mes": v["anio_mes"],
-                "ingresos": pd.to_numeric(v["ingresos"], errors="coerce"),
-                "facturas": pd.to_numeric(v["facturas"], errors="coerce"),
-                "ticket": pd.to_numeric(v["ticket_promedio"], errors="coerce"),
-            })
-            return mensual, "DuckDB (vista analitica.ingresos_mensuales)"
-    except Exception:  # noqa: BLE001
-        pass
-    mensual = df.groupby("anio_mes").agg(
-        ingresos=("total", "sum"),
-        facturas=("id", "count"),
-        ticket=("total", "mean"),
-    ).tail(8)
-    return mensual, "pandas (fallback)"
-
-
 def principal():
     cfg, data, analyzer, predictor = obtener_estado()
 
@@ -100,12 +73,8 @@ def principal():
         )
         return
 
-    # Tendencia mensual global (consumida de DuckDB con respaldo pandas)
-    mensual, fuente_tendencia = _serie_mensual_contexto(df)
-
     st.caption(f":material/calendar_month: Periodo **{f1} → {f2}** · "
-               f"{c.miles(len(filtrado))} facturas consideradas · "
-               f"tendencia: {fuente_tendencia}")
+               f"{c.miles(len(filtrado))} facturas consideradas")
 
     # ----- KPIs del periodo filtrado -----
     total_ingresos = filtrado["total"].sum()
@@ -113,6 +82,13 @@ def principal():
     ticket = filtrado["total"].mean()
     n_clientes = _nunique(filtrado, "cliente_id")
     n_vehiculos = _nunique(filtrado, "vehiculo_id")
+
+    # Tendencia mensual (contexto global para los sparklines)
+    mensual = df.groupby("anio_mes").agg(
+        ingresos=("total", "sum"),
+        facturas=("id", "count"),
+        ticket=("total", "mean"),
+    ).tail(8)
 
     def tendencia(columna):
         return mensual[columna].tolist() if not mensual.empty else None
