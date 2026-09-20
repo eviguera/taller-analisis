@@ -18,6 +18,7 @@ import pandas as pd
 
 from .catalog import escanear_directorio, vincular_archivos_a_datasets, ArchivoDetectado
 from .config import AppConfig, DatasetConfig
+from .hechos import construir_factura_detalle
 from ..loaders import get_loader, CargaResultado
 from ..storage import DataStore
 from ..storage.schema import VISTAS_ANALITICA
@@ -30,6 +31,7 @@ class ResultadoETL:
         self.tablas_registradas: Dict[str, int] = {}
         self.estructura: Dict[str, int] = {}
         self.errores: Dict[str, str] = {}
+        self.advertencias: Dict[str, str] = {}
         self.archivos: List[ArchivoDetectado] = []
         self.asignaciones: Dict[str, Path] = {}
         self.tiempo_carga: float = 0.0
@@ -111,12 +113,36 @@ def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
             log.exception("Error al cargar %s", nombre)
             resultado.errores[nombre] = f"{type(e).__name__}: {e}"
 
+    # --- Conectores externos (Fase 2): llenan datasets ausentes o reemplazan
+    # la fuente local si el conector tiene `forzar: true`. Los fallos de un
+    # conector opcional no rompen el ETL (se reportan como advertencia).
+    if getattr(cfg, "conectores", None):
+        from .conector_sql import ejecutar_conectores
+        conectados, errores_con = ejecutar_conectores(cfg, ya_cargados=set(tablas))
+        tablas.update(conectados)
+        resultado.tablas_registradas.update({n: len(df) for n, df in conectados.items()})
+        for nombre, err in errores_con.items():
+            resultado.advertencias[f"conector:{nombre}"] = err
+
     if store is not None:
         try:
             store.registrar_tablas(tablas)
+
+            # --- Hechos relacionales (Idea 1) --------------------------
+            # Se contruyen antes de las vistas para que las vistas analiticas
+            # puedan referenciar core.factura_detalle.
+            if "facturas" in tablas and not tablas["facturas"].empty:
+                t1 = time()
+                hechos = construir_factura_detalle(
+                    tablas["facturas"], tablas.get("servicios"))
+                if not hechos.empty:
+                    store.registrar_tabla("factura_detalle", hechos, cache=True)
+                    store.registrar_tabla_core("factura_detalle", hechos)
+                resultado.tiempo_estructura = round(time() - t1, 3)
+
             t1 = time()
             resultado.estructura = store.construir_estructura(tablas)
-            resultado.tiempo_estructura = round(time() - t1, 3)
+            resultado.tiempo_estructura = round(resultado.tiempo_estructura + (time() - t1), 3)
             resultado.n_vistas = len(VISTAS_ANALITICA)
         finally:
             store.cerrar()
@@ -159,6 +185,11 @@ def load_all(cfg: AppConfig = None, data_dir: Optional[Path] = None,
                 _escribir_cache(cfg, nombre, df)
         except Exception as e:  # noqa: BLE001
             log.warning("No se pudo cargar %s: %s", nombre, e)
+
+    if getattr(cfg, "conectores", None):
+        from .conector_sql import ejecutar_conectores
+        conectados, _ = ejecutar_conectores(cfg, ya_cargados=set(datos_final))
+        datos_final.update(conectados)
 
     return datos_final
 

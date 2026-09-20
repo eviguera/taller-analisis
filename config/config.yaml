@@ -9,6 +9,15 @@ negocio:
   sector: "taller mecanico"
   slogan: "Gira tus datos en resultados"
   moneda: "CLP"
+  clave: "principal"
+
+# Tema de marca (startup: identidad por workspace)
+tema:
+  color_primario: "#7C4DFF"
+  color_secundario: "#00C2A8"
+  color_acento: "#FFB020"
+  fondo_sidenav: "#101828"
+  texto_logo: "GIRO Analytics"
 
 # Almacen escalable
 almacen:
@@ -53,6 +62,14 @@ fuentes:
     fuentes_alternativas: ["inventario.sav", "inventario.xlsx"]
 
 # ------------------------------------------------------------------
+#  Conectores (Fase 2): alimentar datasets desde otros origenes.
+#  Motor: sqlite | duckdb | csv | excel | url. Si se deja vacio no se usa.
+#  `forzar: true` reemplaza la fuente de archivo local para ese dataset.
+#  Demo rapida: `python main.py conector seed-erp --usar`
+# ------------------------------------------------------------------
+conectores: []
+
+# ------------------------------------------------------------------
 #  Mapeo de columnas (opcional): columna del archivo -> columna
 #  estandar que espera el analisis. Solo listar las que difieran.
 # ------------------------------------------------------------------
@@ -62,3 +79,99 @@ mapeo_columnas:
   #   "Clave": "id"
   # facturas:
   #   "Total_srv": "total"
+
+# ------------------------------------------------------------------
+#  Inventario real (Idea 1): la demanda ya no es una regla inventada.
+#  Asocia palabras clave de cada servicio vendido con la categoria de
+#  producto del inventario, para derivar rotacion real de repuestos.
+# ------------------------------------------------------------------
+inventario:
+  horizonte_meses: 3            # meses atras usados para estimar demanda
+  lead_time_meses: 1.5          # tiempo de reabastecimiento en meses
+  factor_seguridad: 1.2         # colchon sobre la demanda estimada
+  mapeo_servicio_categoria:
+    "aceite": "Aceites"
+    "freno": "Frenos"
+    "filtro": "Filtros"
+    "bujia": "Motor"
+    "correa": "Motor"
+    "suspension": "Suspension"
+    "bateria": "Electrico"
+    "llanta": "Llantas"
+    "climatizacion": "Climatizacion"
+    "transmision": "Transmision"
+    "refrigerante": "Climatizacion"
+
+# ------------------------------------------------------------------
+#  Mantenimiento predictivo (Idea 2): intervalo tipico (en meses) entre
+#  cada servicio preventivo. Al cruzar con el ultimo servicio de cada
+#  vehiculo se estima la proxima visita esperada.
+# ------------------------------------------------------------------
+mantenimiento:
+  intervalos_meses:
+    "Cambio de aceite": 3
+    "Alineacion y balance": 6
+    "Cambio de filtro de aire": 6
+    "Cambio de frenos": 12
+    "Cambio de llantas": 18
+    "Cambio de bujias": 12
+    "Cambio de bateria": 24
+    "Servicio de climatizacion": 12
+    "Diagnostico computarizado": 6
+  umbral_km_aceite: 5000        # intervalos alternativos por kilometraje
+  pendientes_considerar: 3      # cuantos servicios proximos mostrar por vehiculo
+
+# ------------------------------------------------------------------
+#  Alertas y notificaciones (Idea 3): reglas evaluables automaticamente.
+# ------------------------------------------------------------------
+alertas:
+  stock_bajo: true
+  max_stock_alertas: 10
+  churn_riesgo_umbral: 0.60     # prob. de churn para alertar
+  caida_ingresos_mom: -0.20     # variacion mensual que dispara alerta
+  facturas_pendientes_dias: 60  # antiguedad de facturas pendientes
+  max_facturas_pendientes: 20
+  smtp:
+    habilitado: false
+    host: ""
+    puerto: 587
+    remitente: ""
+    password_env: "GIRO_SMTP_PASS"
+    destinatario: ""
+
+# ------------------------------------------------------------------
+#  White-label (Fase 3): reventa y marca blanca del panel.
+#  `titulo` es el titulo de la ventana; `footer` el pie de pagina (vacio
+#  para ocultarlo). Con `mostrar_footer: false` se oculta del todo.
+# ------------------------------------------------------------------
+whitelabel:
+  titulo: "GIRO · Inteligencia de negocio"
+  footer: "Datos procesados con ETL y almacenados en DuckDB. Analítica y predicciones de tu negocio."
+  mostrar_footer: true
+
+# ------------------------------------------------------------------
+#  Simulador what-if (Fase 2): defaults economicos del vertical.
+#  Se sobreescriben al crear un workspace con una plantilla de sector.
+# ------------------------------------------------------------------
+simulador:
+  margen_bruto: 0.42          # margen bruto del taller mecanico de ejemplo
+  gasto_fijo_pct: 0.60        # gasto fijo mensual como % del ingreso medio
+  crecimiento_anual: 0.08     # crecimiento de clientes por defecto
+  ticket_crecimiento: 0.04    # crecimiento del ticket promedio
+
+# ------------------------------------------------------------------
+#  Reportes ejecutivos (producto reventa): motor automatico white-label.
+#  - `tipos`: reportes habilitados para este cliente.
+#  - `periodos_meses`: ventanas de analisis citadas en la portada.
+#  - `ocasion`: rotulo de portada (ej. "Reporte mensual").
+#  - `branding`: identidad del cliente/reventor (colores, logo y contacto).
+# ------------------------------------------------------------------
+reportes:
+  periodos_meses: [3, 12]
+  tipos: [resumen, ventas, clientes, inventario, predicciones]
+  ocasion: "Reporte ejecutivo"
+  branding:
+    consultora: "GIRO Analytics"
+    contacto: "ventas@giroanalytics.cl"
+    web: "https://giroanalytics.cl"
+    pie: "Generado automaticamente con GIRO Analytics. Los datos y predicciones pertenecen a tu empresa."

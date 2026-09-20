@@ -138,12 +138,13 @@ def principal():
             inv_pred = predictor.predecir_inventario()
             st.dataframe(
                 inv_pred[["producto", "categoria", "stock_actual", "stock_minimo",
-                          "tasa_rotacion_mensual", "meses_cobertura", "recomendacion",
-                          "valor_stock", "margen_unitario"]],
+                          "demanda_mensual", "meses_cobertura", "cantidad_recomendada",
+                          "recomendacion", "valor_stock", "margen_unitario"]],
                 width="stretch", height=380,
                 column_config={
+                    "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
                     "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
-                    "tasa_rotacion_mensual": st.column_config.NumberColumn("Rotacion mensual", format="%.2f"),
+                    "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
                     "valor_stock": st.column_config.NumberColumn("Valor stock", format="$#,##0"),
                     "margen_unitario": st.column_config.NumberColumn("Margen unit.", format="$#,##0"),
                 },

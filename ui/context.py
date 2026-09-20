@@ -2,7 +2,8 @@
 
 Se prioriza la simplicidad: la configuracion se cachea como recurso y la
 velocidad de carga la da el cache parquet del pipeline; asi los datos nuevos
-siempre se ven sin clicks extra.
+siempre se ven sin clicks extra. Soporta multiplicidad de workspaces
+(multiempresa) seleccionables desde la barra lateral.
 """
 
 import streamlit as st
@@ -12,36 +13,47 @@ from src.core.pipeline import procesar_etl
 from src.data_loader import load_all, get_data_summary, get_store
 from src.analyzer import Analyzer
 from src.predictions import Predictor
+from src import workspaces
 
 
 @st.cache_resource(show_spinner="Cargando configuracion...")
-def _config_personalizada(nombre, moneda, slogan):
-    """Configuracion base con las preferencias de la sesion aplicadas."""
-    cfg = cargar_config()
+def _config_personalizada(workspace, nombre, moneda, slogan, primario=None, acento=None):
+    """Configuracion del workspace activo con las preferencias de la sesion."""
+    cfg = workspaces.config_actual(selector=lambda: workspace)
     if nombre:
         cfg.negocio_nombre = nombre
     if moneda:
         cfg.moneda = moneda
     if slogan:
         cfg.slogan = slogan
+    if primario or acento:
+        cfg.tema = dict(cfg.tema or {})
+        if primario:
+            cfg.tema["color_primario"] = primario
+        if acento:
+            cfg.tema["color_acento"] = acento
     return cfg
 
 
-def obtener_config():
-    """Configuracion global, aplicadas las preferencias de la sesion.
+def obtener_workspace() -> str:
+    """Workspace activo (session_state > env)."""
+    seleccion = st.session_state.get("workspace") or ""
+    return workspaces.workspace_activo(selector=lambda: seleccion)
 
-    Los controles de la barra lateral guardan `negocio_nombre`, `moneda` y
-    `slogan` en `st.session_state`; si no existen, se usa lo definido en
-    `config.yaml`.
-    """
+
+def obtener_config():
+    """Configuracion global del workspace, aplicadas las preferencias de la sesion."""
+    ws = obtener_workspace()
     nombre = st.session_state.get("negocio_nombre") or st.session_state.get("taller_nombre") or None
     moneda = st.session_state.get("moneda") or None
     slogan = st.session_state.get("slogan") or None
-    return _config_personalizada(nombre, moneda, slogan)
+    primario = st.session_state.get("tema_primario") or None
+    acento = st.session_state.get("tema_acento") or None
+    return _config_personalizada(ws, nombre, moneda, slogan, primario, acento)
 
 
 def cargar_datos(_cfg):
-    """Carga los datasets en memoria (usa cache parquet del pipeline)."""
+    """Carga los datasets del workspace en memoria (usa cache parquet del pipeline)."""
     return load_all(_cfg)
 
 
@@ -51,8 +63,8 @@ def calcular_analista(data):
 
 
 @st.cache_resource(show_spinner="Entrenando modelos de prediccion...")
-def calcular_predictor(data):
-    return Predictor(data)
+def calcular_predictor(data, cfg):
+    return Predictor(data, cfg=cfg)
 
 
 def obtener_estado():
@@ -63,7 +75,7 @@ def obtener_estado():
         if len(data) < 3:
             st.warning("Se cargaron pocos datasets. Revisa la pagina de Datos para importar tus archivos.")
         analyzer = calcular_analista(data)
-        predictor = calcular_predictor(data)
+        predictor = calcular_predictor(data, cfg)
     except Exception as e:  # noqa: BLE001
         st.error(f"No se pudieron cargar los datos:\n\n`{e}`")
         st.info("Ve a la pagina **'Datos y configuracion'** despues de importar tus archivos.")
@@ -85,11 +97,11 @@ def ejecutar_etl_ui():
 
 
 def consulta_sql(sql: str):
-    """Registra las tablas actuales en DuckDB y ejecuta una consulta."""
+    """Registra las tablas del workspace en DuckDB y ejecuta una consulta."""
     cfg = obtener_config()
-    data = cargar_datos(cfg)
-    store = get_store()
+    store = get_store(cfg)
     try:
+        data = cargar_datos(cfg)
         if data:
             store.registrar_tablas(data)
         return store.consulta(sql)
@@ -99,11 +111,11 @@ def consulta_sql(sql: str):
 
 def obtener_estructura():
     """Registra los datos en DuckDB, materializa core/analitica y devuelve
-    el catalogo del almacen (tablas y vistas por esquema)."""
+    el catalogo de objetos del almacen del workspace."""
     cfg = obtener_config()
-    data = cargar_datos(cfg)
-    store = get_store()
+    store = get_store(cfg)
     try:
+        data = cargar_datos(cfg)
         if data:
             store.registrar_tablas(data)
             store.construir_estructura(data)
@@ -115,9 +127,9 @@ def obtener_estructura():
 def consultar_vista(nombre: str):
     """Consulta una vista del esquema analitica (p. ej. 'ingresos_mensuales')."""
     cfg = obtener_config()
-    data = cargar_datos(cfg)
-    store = get_store()
+    store = get_store(cfg)
     try:
+        data = cargar_datos(cfg)
         if data:
             store.registrar_tablas(data)
             store.construir_estructura(data)
@@ -134,6 +146,8 @@ VISTAS_PARA_EXPORTAR = [
     "churn_clientes",
     "detalle_servicios",
     "demanda_servicios_mensual",
+    "ingresos_por_servicio_mensual",
+    "factura_detalle_desnormalizado",
     "inventario_estado",
     "facturas_con_dimensiones",
 ]
@@ -150,14 +164,14 @@ def exportar_analitica_pspp(destino):
     from src.loaders.pspp_loader import exportar_sav
 
     cfg = obtener_config()
-    data = cargar_datos(cfg)
-    store = get_store()
+    store = get_store(cfg)
     destino = Path(destino)
     destino.mkdir(parents=True, exist_ok=True)
 
     exportados: list = []
     errores: dict = {}
     try:
+        data = cargar_datos(cfg)
         if data:
             store.registrar_tablas(data)
             store.construir_estructura(data)
@@ -182,3 +196,20 @@ def exportar_analitica_pspp(destino):
         return exportados, errores
     finally:
         store.cerrar()
+
+
+# ------------------------------------------------------------------
+#  Workspaces (multiempresa)
+# ------------------------------------------------------------------
+
+def crear_workspace_ui(clave: str, nombre: str, moneda: str, con_muestra: bool,
+                       sector: str = None):
+    """Crea un workspace desde la UI, lo selecciona y limpia caches."""
+    from src.core.templates import lista_verticales
+    cfg = workspaces.crear_workspace(
+        clave, nombre=nombre or None, moneda=moneda or None,
+        sector=sector or None, con_datos_muestra=con_muestra)
+    st.session_state["workspace"] = cfg.clave
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    return cfg

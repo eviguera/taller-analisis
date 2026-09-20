@@ -11,6 +11,8 @@ from pathlib import Path
 
 from .analyzer import Analyzer
 from .predictions import Predictor
+from .recomendaciones import next_best_action
+from .core.config_manager import cargar_config
 
 plt.rcParams["font.family"] = "DejaVu Sans"
 
@@ -32,10 +34,11 @@ def _fig_a_base64(fig):
 class ReportGenerator:
     """Genera reportes HTML con analisis y predicciones."""
 
-    def __init__(self, data):
+    def __init__(self, data, cfg=None):
         self.data = data
+        self.cfg = cfg if cfg is not None else cargar_config()
         self.analyzer = Analyzer(data)
-        self.predictor = Predictor(data)
+        self.predictor = Predictor(data, cfg=self.cfg)
         self.output_dir = Path(__file__).parent.parent / "reports"
 
     def _kpi_html(self, kpis):
@@ -144,6 +147,18 @@ class ReportGenerator:
         prob_churn = self.predictor.predecir_churn()
         inv = self.predictor.predecir_inventario()
 
+        # Acciones recomendadas (Idea 2) -> variable para el HTML
+        acciones = next_best_action(self.data, self.cfg, n=15)
+
+        if not acciones.empty:
+            acciones_html = ('<p>Acciones priorizadas por cliente: retencion, '
+                             'mantenimiento preventivo y upsell.</p>' +
+                             self._df_a_html(acciones[["nombre", "accion", "canal",
+                                                       "mensaje", "prioridad", "prob_churn"]]
+                                             .head(15), limit=15))
+        else:
+            acciones_html = '<p>Sin acciones calculables con los datos actuales.</p>'
+
         html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -247,6 +262,11 @@ class ReportGenerator:
             <h2>Clientes en Riesgo de Churn</h2>
             {f'<p>Accuracy: {prob_churn["evaluacion"].get("accuracy", "N/A")} | F1: {prob_churn["evaluacion"].get("f1", "N/A")} | Tasa churn: {prob_churn["evaluacion"].get("tasa_churn", "N/A")}%</p>' if prob_churn.get("evaluacion") else ''}
             {self._df_a_html(prob_churn["resultados"][["nombre", "recencia", "frecuencia", "monto", "churn", "prob_churn"]].head(15), limit=15)}
+        </div>
+
+        <div class="section">
+            <h2>Acciones Recomendadas (Next Best Action)</h2>
+            {acciones_html}
         </div>
 
         <div class="section">

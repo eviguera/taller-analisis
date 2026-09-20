@@ -1,0 +1,39 @@
+# Paquete GIRO (dashboard + landing) para venta / consultoria.
+#
+# Uso:
+#   docker compose up -d --build
+#   abrir  → dashboard http://localhost:8501
+#           landing  http://localhost:8502/?kiosco=1
+#
+# En produccion reemplaza GIRO_DEMO_URL por tu dominio publico del dashboard:
+#   GIRO_DEMO_URL: "https://mi-empresa.com/dashboard/?kiosco=1"
+#
+# Para persistir datos entre reinicios, descomenta el volumen:
+services:
+  giro:
+    build: .
+    image: giro-analytics:latest
+    container_name: giro-venta
+    restart: unless-stopped
+    ports:
+      - "8501:8501"   # dashboard analitico
+      - "8502:8502"   # landing de ventas
+    environment:
+      GIRO_DASH_PORT: "8501"
+      GIRO_LANDING_PORT: "8502"
+      GIRO_DEMO_URL: "http://localhost:8501/?kiosco=1"
+      GIRO_WORKSPACE: "principal"
+    # volumes:
+    #   - giro_data:/app/data
+    #   - giro_workspaces:/app/workspaces
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (8501, 8502)]"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+# volumes:
+#   giro_data:
+#   giro_workspaces:

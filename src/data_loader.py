@@ -13,8 +13,22 @@ from typing import Optional
 from .core.config_manager import cargar_config
 from .core.pipeline import load_all as pipeline_load_all, get_data_summary as pipeline_resumen
 from .loaders import get_loader
+from .workspaces import config_actual
 
-APP_CONFIG = cargar_config()
+_CACHE_CONFIG = {}
+
+
+def get_app_config():
+    """Configuracion global del workspace activo (con cache ligera).
+
+    Permite multiempresa via ``GIRO_WORKSPACE`` o el selector del dashboard:
+    cada workspace tiene su propio config, datos y almacen.
+    """
+    cfg = config_actual()
+    clave = cfg.clave or "principal"
+    if clave not in _CACHE_CONFIG:
+        _CACHE_CONFIG[clave] = cfg
+    return _CACHE_CONFIG[clave]
 
 
 def load_all(data_dir: Optional[Path] = None, cfg=None) -> dict:
@@ -29,7 +43,7 @@ def load_all(data_dir: Optional[Path] = None, cfg=None) -> dict:
     if isinstance(data_dir, AppConfig):
         cfg, data_dir = data_dir, None
     if cfg is None:
-        cfg = APP_CONFIG
+        cfg = get_app_config()
     if data_dir is not None:
         cfg = deepcopy(cfg)
         cfg.directorio_datos = Path(data_dir)
@@ -42,7 +56,7 @@ def _cargar_tabla(nombre: str, path: Optional[Path] = None):
         loader = get_loader(Path(path))
         result = loader.cargar(Path(path))
         return result.datos
-    cfg = APP_CONFIG
+    cfg = get_app_config()
     datos = pipeline_load_all(cfg)
     # pipeline_load_all devuelve todos; extraemos el que toca
     if nombre in datos:
@@ -111,7 +125,9 @@ def get_data_summary(data: dict) -> dict:
     return pipeline_resumen(data)
 
 
-def get_store():
+def get_store(cfg=None):
     """Devuelve la capa de almacenamiento (DuckDB + cache) ya configurada."""
     from .storage import DataStore
-    return DataStore(APP_CONFIG.db_path, APP_CONFIG.cache_dir, usar_cache=APP_CONFIG.usar_cache)
+    if cfg is None:
+        cfg = get_app_config()
+    return DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cfg.usar_cache)
