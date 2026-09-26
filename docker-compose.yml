@@ -1,14 +1,19 @@
 # Paquete GIRO (dashboard + landing) para venta / consultoria.
 #
 # Uso:
+#   export GIRO_AUTH_SECRET="$(openssl rand -hex 32)"
 #   docker compose up -d --build
-#   abrir  → dashboard http://localhost:8501
+#   abrir  → dashboard http://localhost:8501  (crea el primer usuario admin)
 #           landing  http://localhost:8502/?kiosco=1
+#
+# El contenedor escucha en 0.0.0.0, por lo que la app EXIGE autenticacion.
+# Si no defines GIRO_AUTH_SECRET se genera y persiste uno dentro del
+# contenedor: sirve para una sola instancia, pero fijalo si replicas.
 #
 # En produccion reemplaza GIRO_DEMO_URL por tu dominio publico del dashboard:
 #   GIRO_DEMO_URL: "https://mi-empresa.com/dashboard/?kiosco=1"
 #
-# Para persistir datos entre reinicios, descomenta el volumen:
+# Para persistir datos entre reinicios, descomenta el volumen.
 services:
   giro:
     build: .
@@ -23,9 +28,13 @@ services:
       GIRO_LANDING_PORT: "8502"
       GIRO_DEMO_URL: "http://localhost:8501/?kiosco=1"
       GIRO_WORKSPACE: "principal"
+      # Firma de las cookies de sesion. Sin valor, se genera una al vuelo.
+      GIRO_AUTH_SECRET: "${GIRO_AUTH_SECRET:-}"
     # volumes:
     #   - giro_data:/app/data
     #   - giro_workspaces:/app/workspaces
+    #   - giro_reportes:/app/reports
+    #   - ./usuarios.yaml:/app/config/usuarios.yaml   # registro de usuarios
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (8501, 8502)]"]
@@ -37,3 +46,4 @@ services:
 # volumes:
 #   giro_data:
 #   giro_workspaces:
+#   giro_reportes:

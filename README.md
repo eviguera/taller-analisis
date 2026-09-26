@@ -27,6 +27,7 @@ taller-analisis/
 ├── src/
 │   ├── data_loader.py       # Carga y limpieza de datos
 │   ├── analyzer.py          # Analisis exploratorio (KPIs, RFM, estacionalidad)
+│   ├── negocio.py           # Unidad economica de GIRO y ROI (pitch de inversion)
 │   ├── predictions.py       # Modelos de prediccion
 │   ├── model_registry.py    # Persistencia de modelos (joblib) por empresa
 │   ├── recomendaciones.py   # Giro Recomienda: next best action + mantenimiento
@@ -69,6 +70,8 @@ streamlit run dashboard.py
 
 Se abrira en el navegador (por defecto http://localhost:8501) con secciones:
 - **Resumen General**: KPIs, filtros de fecha, ingresos, estacionalidad y tendencia (vistas DuckDB)
+- **Negocio**: unidad economica de la plataforma y ROI (retention, ARPU, cartera
+  en riesgo, valor recuperable y MRR por escenario) — para pitch de inversion
 - **Acciones**: Giro Recomienda (next best action por cliente), mantenimiento predictivo y modelos persistentes
 - **Alertas**: reglas de negocio monitorizadas (stock, churn, ingresos, cobranza) con reporte HTML y email
 - **Clientes**: segmentacion RFM, top clientes
@@ -183,6 +186,27 @@ En la UI, la pagina **Reportes** permite editar la marca, elegir tipo y
 ocasion, generar, previsualizar y descargar; tambien lista el historico
 (`reports/<workspace>/<tipo>/`).
 
+### 2c. Unidad economica y ROI (pagina **Negocio**)
+
+La pagina **Negocio** calcula en vivo, sobre los datos de cada workspace, el
+valor que GIRO genera (retencion de cartera, ARPU, churn, cartera en riesgo,
+valor recuperable y ROI de la suscripcion) y la unidad economica de la
+plataforma (COGS por tenant, margen bruto, MRR y break-even). Es la hoja de
+ruta del pitch de inversion (`docs/pitch.md`) y esta activa tambien en modo
+kiosco para la demo.
+
+Los parametros economicos de la plataforma viven en `suscripcion:` del config
+(planes, costo por tenant, gasto fijo mensual y tasa de recuperacion) y se
+pueden editar por workspace.
+
+```yaml
+suscripcion:
+  planes: {Core: 150000, Pro: 450000, Enterprise: null}
+  costo_tenant_mensual: 3000        # CLP/mes por workspace
+  gasto_fijo_mensual: 7000000       # CLP/mes (2 ing. + 1 comercial)
+  tasa_recuperacion_riesgo: 0.30    # % de cartera en riesgo que GIRO recupera
+```
+
 ### 4. Workspaces (multiempresa)
 
 Cada empresa vive en `workspaces/<clave>/` con su propia configuracion
@@ -192,6 +216,97 @@ totalmente aislados. Al crear una se puede aplicar una **plantilla de vertical**
 selector Sector en la UI) que preconfigura inventario, mantenimiento, alertas y
 tema de marca. El workspace activo se elige en el sidebar de la app, via CLI
 con `--data` o con la variable `GIRO_WORKSPACE`.
+
+La clave se valida contra `^[a-z0-9][a-z0-9_-]{0,63}$` antes de tocar el disco,
+asi que ni la UI ni la CLI pueden construir una ruta fuera de `workspaces/`
+(`../../etc`, `/etc/passwd` o un `..` suelto se rechazan).
+
+### 4b. Usuarios, roles y acceso (autenticacion)
+
+La app exige inicio de sesion. El registro de usuarios vive en
+`config/usuarios.yaml` (permisos `0600`, fuera de git) y las contrasenas se
+guardan con **scrypt** + sal por usuario; nunca en claro.
+
+```bash
+# Crear el primer administrador (tambien se puede hacer desde la UI al abrirla).
+# Si omites --password, la contrasena se pide de forma oculta.
+python main.py usuarios crear ana --admin
+
+# Crear un cliente con acceso a una empresa concreta
+python main.py usuarios crear carlos --workspace clinica-norte
+
+# Listar, rotar clave y dar/cortar acceso a un workspace
+python main.py usuarios listar
+python main.py usuarios password ana --password 'otra-clave-larga'
+python main.py usuarios acceso carlos --workspace clinica-norte --activo si
+python main.py usuarios acceso carlos --workspace clinica-norte --activo no
+python main.py usuarios acceso carlos --todas            # acceso total
+```
+
+**Roles.** `admin` ve todos los workspaces y administra la plataforma;
+`cliente` solo ve los que tiene asignados. El aislamiento se aplica en el
+servidor (`ui/context.py`), no en la interfaz: un `cliente` que manipule
+`st.session_state` o la URL no logra ver un workspace ajeno.
+
+> `principal` no es un tenant: resuelve contra `data/` y `config/config.yaml` de
+> la raiz, o sea el dataset de demostracion que el kiosco ya sirve sin login.
+> Aparece siempre en el selector. Los datos de un cliente van **siempre** en
+> `workspaces/<clave>/data/`, nunca en `data/`.
+
+**Que ve cada rol.**
+
+| | admin | cliente |
+|---|---|---|
+| Dashboards, alertas, reportes, simulador | si | si |
+| Selector y creacion de workspaces | si | no |
+| **Datos → Conectores ERP/SQL** | si | no |
+| **Datos → Consultas SQL** | si | no |
+
+La consola SQL queda restringida a admin y, ademas, a consultas de solo lectura
+(`SELECT`/`WITH`/`EXPLAIN`/`SHOW`/`TABLE`/`VALUES`); se rechazan escritura,
+`ATTACH`, lectura de archivos, `PRAGMA` y sentencias multiples.
+
+**SSO (OIDC).** Opcional, en `.streamlit/secrets.toml`:
+
+```toml
+[auth]
+oidc_client_id = "..."
+oidc_client_secret = "..."
+oidc_metadata_url = "https://login.tu-empresa.com/.well-known/openid-configuration"
+oidc_redirect_uri = "https://tu-dominio.com/dashboard"
+oidc_admin_emails = ["admin@tu-empresa.com"]   # opcion: quienes son admin
+```
+
+Solo ser admin requiere match explicito en `GIRO_AUTH_ROLES`
+(`{"@tu-empresa.com": "admin"}`). El alcance de empresas se hereda del
+registro local, nunca del simple hecho de tener el correo verificado: en
+multiempresa, dar por hecho que un correo verificado equivale a entregar el
+portfolio completo a cualquiera que consiga una cuenta en el IdP. Aplica el
+mismo criterio del login local:
+
+```bash
+python main.py usuarios acceso hola@acme.cl --workspace clinica-norte
+```
+
+Un correo OIDC sin asignacion previa entra acotado al workspace publico de
+demostracion y no ve datos de ningun cliente.
+
+**Modo kiosco.** `?kiosco=1` (por ejemplo `http://localhost:8501/?kiosco=1`)
+abre una vista publica de solo lectura para demos: oculta configuracion,
+conectores, consola SQL y el selector de empresas.
+
+**Variables de entorno.**
+
+| Variable | Por defecto | Para que sirve |
+|---|---|---|
+| `GIRO_AUTH_SECRET` | se genera y persiste | Firma de la cookie de sesion. **Definala en produccion** |
+| `GIRO_AUTH_USERS` | `config/usuarios.yaml` | Ubicacion del registro |
+| `GIRO_AUTH_DIAS` | `12` | Duracion de la sesion (dias) |
+| `GIRO_AUTH_PERSISTIR_URL` | `0` | `1` refleja el token en la URL. Solo para pestanas privadas: el token queda en el historial y en el `Referer` |
+
+La autenticacion se **exige** cuando el servidor escucha fuera de localhost
+(como en Docker, HF Spaces o un VPS). Para desactivarla en local, pon
+`GIRO_AUTH=0` y deja el servidor en `127.0.0.1`.
 
 ### 5. Conectores (alimentacion desde ERP/SQL)
 
@@ -280,18 +395,30 @@ para que el orquestador lo reinicie (fail-closed).
 
 ```bash
 # Build y arranque local
+export GIRO_AUTH_SECRET="$(openssl rand -hex 32)"
 docker compose up -d --build
 # → dashboard http://localhost:8501  ·  landing http://localhost:8502
+# Al abrir el dashboard por primera vez, la UI te pide crear el admin.
 
 # O sin compose
 docker build -t giro-analytics .
-docker run -d -p 8501:8501 -p 8502:8502 --name giro-venta giro-analytics
+docker run -d -p 8501:8501 -p 8502:8502 -e GIRO_AUTH_SECRET="$(openssl rand -hex 32)" \
+  --name giro-venta giro-analytics
 ```
 
+El contenedor corre como usuario **no root** (uid 1001) y la imagen no lleva
+datos de tenants, secretos ni modelos entrenados: eso va en volumen. Al exponer
+el puerto, la app exige autenticacion, asi que `GIRO_AUTH_SECRET` es obligatorio
+en produccion.
+
 Configuracion en runtime (env): `GIRO_DASH_PORT`, `GIRO_LANDING_PORT`
-(no hace falta cambiarlos por defecto), `GIRO_WORKSPACE` (workspace inicial) y
+(no hace falta cambiarlos por defecto), `GIRO_WORKSPACE` (workspace inicial),
+`GIRO_AUTH_SECRET` (firma de sesion) y
 `GIRO_DEMO_URL` (a donde apunta el CTA "Ver demo" de la landing; en produccion
 usa tu dominio publico: `https://micliente.com/dashboard/?kiosco=1`).
+Para conservar datos entre reinicios, descomenta los volumenes de
+`docker-compose.yml` (`/app/data`, `/app/workspaces`, `/app/reports`) y monta el
+registro de usuarios en `/app/config/usuarios.yaml`.
 
 Es el mismo `Dockerfile` que corre en **Hugging Face Spaces / Streamlit
 Community Cloud**: en plataformas de un solo proceso apunta el entry file a

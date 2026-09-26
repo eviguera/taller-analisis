@@ -48,6 +48,61 @@ def css(tema: dict) -> str:
     """
 
 
+def _css_premium(oscuridad: bool) -> str:
+    """Overlay CSS opcional (pedido por el usuario) con look SaaS.
+
+    Eleva tarjetas de metricas, paneles con borde y botones primarios con
+    sombras suaves y radios consistentes, adaptandose al modo claro/oscuro.
+    """
+    if oscuridad:
+        fondo_tarjeta = "#0f1c33"
+        borde_tarjeta = "#2a3a5a"
+        sombra_tarjeta = "0 1px 2px rgba(0,0,0,0.35), 0 6px 16px rgba(0,0,0,0.28)"
+        sombra_panel = "0 1px 2px rgba(0,0,0,0.30), 0 3px 10px rgba(0,0,0,0.25)"
+    else:
+        fondo_tarjeta = "#ffffff"
+        borde_tarjeta = "#e2e8f0"
+        sombra_tarjeta = "0 1px 2px rgba(30,41,59,0.04), 0 6px 16px rgba(30,41,59,0.06)"
+        sombra_panel = "0 1px 2px rgba(30,41,59,0.04), 0 3px 10px rgba(30,41,59,0.05)"
+
+    return f"""
+    <style>
+    [data-testid="stMetric"] {{
+        background: {fondo_tarjeta};
+        border: 1px solid {borde_tarjeta};
+        border-radius: 14px;
+        padding: 0.9rem 1rem;
+        box-shadow: {sombra_tarjeta};
+    }}
+    [data-testid="stMetricLabel"] p {{
+        font-size: 0.82rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        opacity: 0.75;
+    }}
+    [data-testid="stVerticalBlockBorderWrapper"] {{
+        box-shadow: {sombra_panel};
+    }}
+    [data-testid="stBaseButton-primary"] {{
+        box-shadow: {sombra_panel};
+    }}
+    [data-testid="stBadge"] {{
+        border-radius: 999px;
+    }}
+    .giro-brand {{ letter-spacing: 0.01em; }}
+    .giro-brand::after {{
+        content: "";
+        display: block;
+        width: 2.2rem;
+        height: 3px;
+        border-radius: 2px;
+        margin-top: 0.4rem;
+        background: linear-gradient(90deg, var(--giro-primario), var(--giro-secundario));
+    }}
+    </style>
+    """
+
+
 def logo_html(texto_logo: str, slogan: str = "") -> str:
     """Cabecera de marca para el sidebar."""
     return (
@@ -59,5 +114,10 @@ def logo_html(texto_logo: str, slogan: str = "") -> str:
 
 
 def aplicar(tema: dict) -> None:
-    """Inyecta el CSS del tema del workspace en la pagina."""
-    st.markdown(css(tema), unsafe_allow_html=True)
+    """Inyecta el CSS del tema del workspace + overlay premium en la pagina."""
+    oscuro = False
+    try:
+        oscuro = st.context.theme.type == "dark"
+    except Exception:  # noqa: BLE001
+        pass
+    st.markdown(css(tema) + _css_premium(oscuro), unsafe_allow_html=True)

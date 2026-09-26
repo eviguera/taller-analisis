@@ -446,6 +446,76 @@ def cmd_warehouse(args):
             print(df.to_string(index=False))
 
 
+def cmd_usuarios(args):
+    """Gestiona el registro de usuarios y los roles de acceso a la app."""
+    from getpass import getpass
+
+    from src.core import auth
+    from src import workspaces as ws
+
+    def _pass(args) -> str:
+        if getattr(args, "password", None):
+            return args.password
+        return getpass(f"Contrasena para {args.username}: ")
+
+    if args.accion == "listar":
+        usuarios = auth.cargar_registro()
+        if not usuarios:
+            print(f"Sin usuarios registrados ({auth.ruta_registro()}).")
+            print("Crea el primero con:  python main.py usuarios crear <nombre> --admin")
+            return
+        print(f"Registro: {auth.ruta_registro()}")
+        print(f"Usuarios ({len(usuarios)}):")
+        for u in sorted(usuarios.values(), key=lambda x: x.username):
+            alcance = "todas las empresas" if u.es_admin else \
+                (", ".join(u.workspaces) or "sin empresas asignadas")
+            estado = "" if u.activo else "  [DESACTIVADO]"
+            print(f"  - {u.username} ({u.rol}){estado}")
+            print(f"      nombre: {u.nombre}")
+            print(f"      acceso: {alcance}")
+
+    elif args.accion == "crear":
+        try:
+            workspaces = ws.listar_workspaces() if args.todas else (args.workspace or [])
+            u = auth.crear_usuario(
+                args.username, _pass(args), nombre=args.nombre or args.username,
+                rol=auth.ROL_ADMIN if args.admin else auth.ROL_CLIENTE,
+                workspaces=workspaces, email=args.email or "")
+        except ValueError as e:
+            print(f"Error: {e}")
+            raise SystemExit(1)
+        alcance = "todas las empresas" if u.es_admin else (", ".join(u.workspaces) or "ninguna")
+        print(f"Usuario '{u.username}' creado con rol '{u.rol}'")
+        print(f"  acceso a: {alcance}")
+
+    elif args.accion == "password":
+        if not auth.actualizar_password(args.username, _pass(args)):
+            print(f"Error: no existe el usuario '{args.username}'")
+            raise SystemExit(1)
+        print(f"Contrasena de '{args.username}' actualizada.")
+
+    elif args.accion == "acceso":
+        try:
+            workspaces = ws.listar_workspaces() if args.todas else (args.workspace or [])
+            usuarios = auth.cargar_registro()
+            u = usuarios.get(args.username)
+            if u is None:
+                print(f"Error: no existe el usuario '{args.username}'")
+                raise SystemExit(1)
+            u.workspaces = workspaces
+            if args.rol:
+                u.rol = args.rol
+            if args.activo is not None:
+                u.activo = args.activo
+            auth.guardar_registro(usuarios)
+        except ValueError as e:
+            print(f"Error: {e}")
+            raise SystemExit(1)
+        alcance = "todas las empresas" if u.es_admin else (", ".join(u.workspaces) or "ninguna")
+        print(f"'{u.username}' → rol {u.rol} · acceso: {alcance} · "
+              f"{'activo' if u.activo else 'desactivado'}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="GIRO - Inteligencia de negocio")
     subparsers = parser.add_subparsers(dest="comando", required=True)
@@ -560,9 +630,51 @@ def main():
     prpt_g.add_argument("--abrir", action="store_true", help="Abre el reporte")
     prpt_g.set_defaults(func=cmd_reporte)
 
-    args = parser.parse_args()
-    args.func(args)
+    # --- Usuarios y acceso (autenticacion de la app web) ---
+    pu = subparsers.add_parser(
+        "usuarios", help="Gestiona usuarios, roles y acceso a empresas")
+    pu_g = pu.add_subparsers(dest="accion", required=True)
 
+    pu_l = pu_g.add_parser("listar", help="Muestra el registro de usuarios")
+    pu_l.set_defaults(func=cmd_usuarios)
+
+    pu_c = pu_g.add_parser("crear", help="Crea un usuario")
+    pu_c.add_argument("username", type=str, help="Nombre de usuario")
+    pu_c.add_argument("--password", type=str, default=None,
+                      help="Contrasena (si se omite, se pide de forma oculta)")
+    pu_c.add_argument("--nombre", type=str, default=None, help="Nombre a mostrar")
+    pu_c.add_argument("--email", type=str, default=None)
+    pu_c.add_argument("--admin", action="store_true",
+                      help="Admin: ve todas las empresas, usa la consola SQL")
+    pu_c.add_argument("--workspace", type=str, action="append", default=[],
+                      help="Empresa a la que accede (repetible)")
+    pu_c.add_argument("--todas", action="store_true",
+                      help="Le da acceso a todas las empresas existentes")
+    pu_c.set_defaults(func=cmd_usuarios)
+
+    pu_p = pu_g.add_parser("password", help="Cambia la contrasena de un usuario")
+    pu_p.add_argument("username", type=str)
+    pu_p.add_argument("--password", type=str, default=None)
+    pu_p.set_defaults(func=cmd_usuarios)
+
+    pu_a = pu_g.add_parser("acceso", help="Cambia rol, acceso o estado de un usuario")
+    pu_a.add_argument("username", type=str)
+    pu_a.add_argument("--rol", type=str, default=None, choices=["admin", "cliente"])
+    pu_a.add_argument("--workspace", type=str, action="append", default=[])
+    pu_a.add_argument("--todas", action="store_true")
+    pu_a.add_argument("--activo", type=lambda v: v.lower() in ("1", "true", "si", "yes"),
+                      default=None)
+    pu_a.set_defaults(func=cmd_usuarios)
+
+    args = parser.parse_args()
+    try:
+        args.func(args)
+    except (ValueError, FileNotFoundError) as e:
+        # Errores de entrada (clave de workspace invalida, workspace que no
+        # existe, formato desconocido): mensaje y codigo de salida, no un
+        # traceback que asuste a quien escribio el comando.
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 if __name__ == "__main__":
     main()

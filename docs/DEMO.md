@@ -32,6 +32,22 @@ Duracion estimada: ~8 min. Todas las cifras son las reales del dashboard.
 > valor**, 4 leales, 2 campeones. Pero ojo: **11 en riesgo y 6 perdidos**.
 > Una campana de reactivacion tocaria ~34% de la cartera con impacto medible."
 
+## 3b. Negocio (cierre de inversion, obligatorio)
+
+> "Aqui la pagina que me importa para ustedes: **unidad economica en vivo**.
+> El taller factura **$1,33M CLP en 12 meses** con ARPU de $2.313 y un churn
+> implicito de ~12%. Tiene **$783K de cartera en riesgo** (30%); GIRO puede
+> recuperar ~$235K ejecutando las next-best-actions.
+>
+> Simulando sobre esos datos reales: con GIRO el escenario agresivo arroja
+> **$1,76M de ingresos extra** en 12 meses vs no hacer nada. Y esto es la
+> plataforma: **COGS por tenant de $3.000 CLP/mes, margen bruto >99%,
+> break-even en ~22 clientes Pro (~$8,3M MRR)**. A 25 clientes el MRR es
+> $8,25M con margen neto positivo; a 50, $16,5M."
+
+- Pagina "Negocio": salud de cartera, cartera en riesgo, ROI por plan y
+  tabla de MRR por tamano de cartera con break-even.
+
 ## 4. Servicios y demanda
 
 > "Los 120 servicios detectados con estacionalidad mensual: sabemos que demanda
@@ -62,9 +78,9 @@ Duracion estimada: ~8 min. Todas las cifras son las reales del dashboard.
 
 ## Notas
 
-- Recorre en orden: Resumen -> Vehiculos (Ingresos) -> Clientes -> Servicios ->
-  Inventario -> Predicciones -> Datos (PSPP/ETL).
+- Recorre en orden: Resumen -> Negocio -> Vehiculos (Ingresos) -> Clientes ->
+  Servicios -> Inventario -> Predicciones -> Datos (PSPP/ETL).
 - Cierra la demo con la pestana Procesar (ETL) mostrando el panel de rendimiento
   (tiempos reales, tablas core y vistas analiticas).
 - Cifras reales actuales (ejemplo del dataset): ingresos $2.749.288 CLP,
-  318 facturas, 50 clientes, 88 vehiculos, 83 con ingresos.
+  318 facturas, 50 clientes, 88 vehiculos, 83 con ingresos; 12m: $1.332.424 CLP.

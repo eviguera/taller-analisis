@@ -45,6 +45,8 @@ class AppConfig:
     conectores: List[Dict] = field(default_factory=list)  # motor, fuente, consulta, dataset, forzar
     # --- reportes ejecutivos (producto reventa): white-label y tipos por cliente ---
     reportes: Dict = field(default_factory=dict)  # tipos, ocasion, periodos_meses, branding
+    # --- submarca/plataforma (inversion/pitch): planes, COGS y costo fijo ---
+    suscripcion: Dict = field(default_factory=dict)  # planes, costo_tenant, gasto_fijo
 
     # Compat: campo historico `taller_nombre` (se mantiene sincronizado).
     @property

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import List, Optional
 
@@ -44,22 +45,30 @@ class GeneradorReportes:
     # ------------------------------------------------------------------
     def _portada(self, meta: dict) -> str:
         m = self.marca
-        logo = f'<img class="logo" src="{m["logo"]}" alt=""/>' if m.get("logo") else ""
-        slogan = f'<p style="color:#64748B;margin-top:4px;">{m["slogan"]}</p>' if m.get("slogan") else ""
-        sector_tope = f'<div class="sector-tope">{m["sector"]}</div>' if m.get("sector") else ""
+        # Todo lo que sale de m viene de config/config.yaml: son texto de marca
+        # capturado por el usuario (nombre, eslogan, consultora, contacto), y
+        # el documento se sirve para descarga y se pinta en un iframe. Escapa.
+        # Los colores no se escapan: branding.marca ya los valida como hex.
+        logo = (f'<img class="logo" src="{escape(m["logo"] or "")}" alt=""/>'
+                if m.get("logo") else "")
+        slogan = (f'<p style="color:#64748B;margin-top:4px;">{escape(m["slogan"])}</p>'
+                  if m.get("slogan") else "")
+        sector_tope = (f'<div class="sector-tope">{escape(m["sector"])}</div>'
+                       if m.get("sector") else "")
         contacto = " · ".join([x for x in [m["contacto"], m["web"]] if x])
         return f"""
         <div class="portada">
             {logo}{sector_tope}
-            <h1>{meta["titulo"]}</h1>{slogan}
-            <div><span class="ocasion">{meta["ocasion"]}</span></div>
+            <h1>{escape(meta["titulo"])}</h1>{slogan}
+            <div><span class="ocasion">{escape(meta["ocasion"])}</span></div>
             <div class="datos">
-                <div class="dato"><b>Empresa</b><span>{m["negocio"]}</span></div>
-                <div class="dato"><b>Periodo analizado</b><span>{meta["periodo"]}</span></div>
-                <div class="dato"><b>Generado el</b><span>{meta["fecha"]}</span></div>
+                <div class="dato"><b>Empresa</b><span>{escape(m["negocio"])}</span></div>
+                <div class="dato"><b>Periodo analizado</b><span>{escape(meta["periodo"])}</span></div>
+                <div class="dato"><b>Generado el</b><span>{escape(meta["fecha"])}</span></div>
                 <div class="dato reversa"><b>Entregado por</b>
-                    <span>{m["consultora"]}</span>
-                    {f'<br><small style="color:#94A3B8;">{contacto}</small>' if contacto else ''}
+                    <span>{escape(m["consultora"])}</span>
+                    {f'<br><small style="color:#94A3B8;">{escape(contacto)}</small>'
+                     if contacto else ''}
                 </div>
             </div>
         </div>"""
@@ -289,12 +298,12 @@ class GeneradorReportes:
         return S.seccion(
             "Metodologia",
             f'<ul style="padding-left:18px;font-size:12.5px;color:#475569;'
-            f'line-height:1.8;"><li>Datos procesados con pipeline ETL y almacen '
-            f'duckDB.</li><li>KPIs, estacionalidad y segmentacion RFM calculados '
-            f'sobre los datos de {self.marca["negocio"]}.</li><li>Predicciones '
-            f'con modelos de machine learning (sklearn) retenidos por workspace.'
-            f'</li><li>Las cifras usan los valores expresados en {self.mon}.</li>'
-            f'</ul>',
+             f'line-height:1.8;"><li>Datos procesados con pipeline ETL y almacen '
+             f'duckDB.</li><li>KPIs, estacionalidad y segmentacion RFM calculados '
+             f'sobre los datos de {escape(self.marca["negocio"])}.</li><li>Predicciones '
+             f'con modelos de machine learning (sklearn) retenidos por workspace.'
+             f'</li><li>Las cifras usan los valores expresados en {escape(self.mon)}.</li>'
+             f'</ul>',
             "Como se construyo este reporte")
 
     # ------------------------------------------------------------------
@@ -305,14 +314,14 @@ class GeneradorReportes:
         meta = self._meta(tipo, ocasion_label)
         portada = self._portada(meta)
         contenido = self._contenido(tipo, ctx)
-        pie = (f'<div class="pie"><b>{self.marca["consultora"]}</b> · '
-               f'{self.marca["pie"]}</div>')
+        pie = (f'<div class="pie"><b>{escape(self.marca["consultora"])}</b> · '
+               f'{escape(self.marca["pie"])}</div>')
         html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{meta["titulo"]} · {self.marca["negocio"]}</title>
+<title>{escape(meta["titulo"])} · {escape(self.marca["negocio"])}</title>
 {css_reporte(self.marca["color_primario"], self.marca["color_secundario"], self.marca["color_acento"])}
 </head>
 <body>

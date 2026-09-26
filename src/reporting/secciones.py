@@ -3,20 +3,34 @@
 Cada funcion recibe datos ya calculados (analyzer/predictor) y devuelve un
 fragmento HTML estilizado con las variables de marca en CSS vars. El motor
 las une con la portada y el pie en un documento completo listo para imprimir.
+
+Esta es la capa que produce HTML, asi que escapa todo valor que venga de los
+datos del cliente (nombres, productos, segmentos, textos de insight). El
+fragmento que ya es HTML y entra por parametro (``cuerpo``) se interpola tal
+cual a proposito.
 """
+
+from html import escape
 
 from .formato import (miles, moneda, fig_a_base64, periodo_es,
                       MESES_ES_CORTO, DIAS_SEMANA)
 
+# Tipos de insight admitidos. El valor va dentro de un atributo class, asi que
+# se restringe a un conjunto cerrado en vez de confiar en la clave recibida.
+_TIPOS_INSIGHT = ("positivo", "negativo", "apunte")
+
 
 def seccion(titulo, cuerpo, subtitulo=""):
-    """Envuelve un bloque con titulo, cuerpo y cabecera de marca."""
-    stitulo = f'<p class="seccion-sub">{subtitulo}</p>' if subtitulo else ""
+    """Envuelve un bloque con titulo, cuerpo y cabecera de marca.
+
+    ``cuerpo`` es HTML ya construido y se inserta sin escapar.
+    """
+    stitulo = f'<p class="seccion-sub">{escape(subtitulo)}</p>' if subtitulo else ""
     return f"""
     <section class="seccion">
         <header class="seccion-hd">
             <div>
-                <h2>{titulo}</h2>
+                <h2>{escape(titulo)}</h2>
                 {stitulo}
             </div>
             <div class="seccion-tira"></div>
@@ -37,9 +51,9 @@ def kpi_cards(kpis, moneda_cfg="CLP"):
     ]
     cards = ""
     for etiqueta, valor, grupo in items:
-        cards += (f'<div class="kpi-card"><span class="kpi-grupo">{grupo}</span>'
-                  f'<span class="kpi-valor">{valor}</span>'
-                  f'<span class="kpi-etiqueta">{etiqueta}</span></div>')
+        cards += (f'<div class="kpi-card"><span class="kpi-grupo">{escape(grupo)}</span>'
+                  f'<span class="kpi-valor">{escape(valor)}</span>'
+                  f'<span class="kpi-etiqueta">{escape(etiqueta)}</span></div>')
     return f'<div class="kpi-grid">{cards}</div>'
 
 
@@ -49,11 +63,14 @@ def insight_lista(insights):
         return '<p class="vacio">No hay observaciones automaticas para los datos actuales.</p>'
     html = ""
     for ins in insights:
-        icono = {"positivo": "✔", "negativo": "!", "apunte": "i"}.get(ins["tipo"], "i")
-        html += (f'<div class="insight insight-{ins["tipo"]}">'
+        tipo = ins.get("tipo") if isinstance(ins, dict) else None
+        if tipo not in _TIPOS_INSIGHT:
+            tipo = "apunte"
+        icono = {"positivo": "✔", "negativo": "!", "apunte": "i"}[tipo]
+        html += (f'<div class="insight insight-{tipo}">'
                  f'<div class="insight-icono">{icono}</div>'
-                 f'<div><strong>{ins["titulo"]}</strong>'
-                 f'<p>{ins["texto"]}</p></div></div>')
+                 f'<div><strong>{escape(str(ins.get("titulo", "")))}</strong>'
+                 f'<p>{escape(str(ins.get("texto", "")))}</p></div></div>')
     return html
 
 
@@ -140,10 +157,12 @@ def tabla(df, columnas=None, titulos=None, limit=12, moneda_cols=None,
             else:
                 texto = miles(valor) if isinstance(valor, (int, float)) else str(valor)
             clase = "cell-alta" if col in resaltar and valor in resaltar[col] else ""
-            celdas += f"<td class='{clase}'>{texto}</td>"
+            # El texto de la celda viene de los datos del cliente (nombres,
+            # productos, servicios): va escapado siempre.
+            celdas += f"<td class='{clase}'>{escape(texto)}</td>"
         filas += f"<tr>{celdas}</tr>"
 
-    cab = "".join(f"<th>{titulos.get(c, c)}</th>" for c in columnas)
+    cab = "".join(f"<th>{escape(str(titulos.get(c, c)))}</th>" for c in columnas)
     return (f'<div class="tabla-scroll"><table class="tabla">'
             f"<thead><tr>{cab}</tr></thead><tbody>{filas}</tbody></table></div>")
 
@@ -159,12 +178,15 @@ def badges_segmentos(rfm):
               "Perdido": "seg-perdido"}
     piezas = ""
     for segmento, n in conteo.items():
+        # "clases.get(...)" ya cae en un valor conocido si el segmento es
+        # inesperado, asi que la clase es segura; el nombre del segmento no.
         piezas += (f'<div class="seg-badge {clases.get(segmento, "seg-promedio")}">'
-                   f'<strong>{n}</strong><span>{segmento}</span></div>')
+                   f'<strong>{int(n)}</strong>'
+                   f'<span>{escape(str(segmento))}</span></div>')
     return f'<div class="seg-badges">{piezas}</div>'
 
 
 def notas_tabla(columnas, moneda_cfg="CLP"):
     """Leyenda pequena de unidades para pie de tablas numericas."""
-    return (f'<p class="nota">Valores en {moneda_cfg}. '
+    return (f'<p class="nota">Valores en {escape(str(moneda_cfg))}. '
             "Cifras generadas con ETL y almacen DuckDB.</p>")

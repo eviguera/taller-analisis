@@ -160,6 +160,20 @@ simulador:
   ticket_crecimiento: 0.04    # crecimiento del ticket promedio
 
 # ------------------------------------------------------------------
+#  Suscripcion / plataforma (inversion y pitch): planes por workspace,
+#  COGS por tenant y gasto fijo mensual de la plataforma. Se usan en la
+#  pagina Negocio para calcular unidad economica, MRR y break-even.
+# ------------------------------------------------------------------
+suscripcion:
+  planes:
+    Core: 150000
+    Pro: 450000
+    Enterprise: null              # cotizacion (on-premise para grandes)
+  costo_tenant_mensual: 3000      # CLP/mes por workspace (DuckDB + parquet + open source)
+  gasto_fijo_mensual: 7000000     # CLP/mes (2 ingenieros + 1 comercial + herramientas)
+  tasa_recuperacion_riesgo: 0.30  # % de la cartera en riesgo que GIRO ayuda a recuperar
+
+# ------------------------------------------------------------------
 #  Reportes ejecutivos (producto reventa): motor automatico white-label.
 #  - `tipos`: reportes habilitados para este cliente.
 #  - `periodos_meses`: ventanas de analisis citadas en la portada.

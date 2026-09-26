@@ -45,6 +45,7 @@ def cargar_config(ruta: Optional[Path] = None) -> AppConfig:
         simulador=(raw.get("simulador") or {}) or {},
         conectores=[c for c in (raw.get("conectores") or []) if isinstance(c, dict)],
         reportes=(raw.get("reportes") or {}) or {},
+        suscripcion=(raw.get("suscripcion") or {}) or {},
     )
     db = raw.get("almacen", {}).get("db", "data/almacen.duckdb")
     cfg.db_path = base / db
@@ -106,6 +107,7 @@ def guardar_config(cfg: AppConfig, ruta: Optional[Path] = None) -> Path:
         "simulador": {k: v for k, v in (cfg.simulador or {}).items() if v},
         "whitelabel": {k: v for k, v in (cfg.whitelabel or {}).items() if v},
         "reportes": {k: v for k, v in (cfg.reportes or {}).items() if v},
+        "suscripcion": {k: v for k, v in (cfg.suscripcion or {}).items() if v},
     }
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with open(ruta, "w", encoding="utf-8") as f:

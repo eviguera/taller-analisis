@@ -4,9 +4,14 @@ Lee la seccion ``reportes:`` de la configuracion del workspace (branding,
 contacto, logo) y la fusiona con el tema de marca (``tema:``) para resolver
 los colores del documento. Asi una consultora puede entregar el reporte con
 sus colores y datos de contacto, por cliente.
+
+Este modulo resuelve *datos*, no HTML: el escapado ocurre en la capa que
+renderiza (``secciones`` y ``engine``). Aqui si hace falta, lo que se valida
+son los colores, porque acaban interpolados dentro de un bloque CSS.
 """
 
 import base64
+import re
 from pathlib import Path
 
 from .catalogo import TIPOS
@@ -15,12 +20,24 @@ COLOR_DEFECTO = "#7C4DFF"
 COLOR_DEFECTO_SEC = "#00C2A8"
 INK_DEFECTO = "#101828"
 
+# Solo hex de 3 o 6 digitos. Los colores van dentro de un bloque CSS del
+# documento, asi que un valor como "red;} body{display:none" inyectaria reglas.
+_COLOR_HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
 
 def _limpiar(valor):
     if valor is None:
         return None
     valor = valor.strip()
     return valor or None
+
+
+def _color(valor, defecto: str) -> str:
+    """Un color o el defecto. Rechaza cualquier cosa que no sea hex."""
+    candidato = _limpiar(valor)
+    if candidato and _COLOR_HEX.match(candidato):
+        return candidato
+    return defecto
 
 
 def conf_reporte(cfg, clave="reportes") -> dict:
@@ -49,9 +66,9 @@ def marca(cfg) -> dict:
                     "svg": "image/svg+xml", "webp": "image/webp"}.get(ext.lstrip("."), "image/png")
             logo_data = f"data:{mime};base64,{base64.b64encode(ruta.read_bytes()).decode('utf-8')}"
 
-    color_primario = _limpiar(br.get("color_primario")) or _limpiar(tema.get("color_primario")) or COLOR_DEFECTO
-    color_secundario = _limpiar(br.get("color_secundario")) or _limpiar(tema.get("color_secundario")) or COLOR_DEFECTO_SEC
-    color_acento = _limpiar(br.get("color_acento")) or _limpiar(tema.get("color_acento")) or color_primario
+    color_primario = _color(br.get("color_primario"), _color(tema.get("color_primario"), COLOR_DEFECTO))
+    color_secundario = _color(br.get("color_secundario"), _color(tema.get("color_secundario"), COLOR_DEFECTO_SEC))
+    color_acento = _color(br.get("color_acento"), _color(tema.get("color_acento"), color_primario))
 
     return {
         # identidad del cliente (workspace)

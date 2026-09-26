@@ -1,16 +1,18 @@
 """Pagina: Datos y Configuracion (asistente de importacion + integracion PSPP)."""
 
+import contextlib
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from src.core.catalog import escanear_directorio, clasificar_archivo, vincular_archivos_a_datasets
+from src.core import auth
 from src.loaders import get_loader
 from src.loaders.pspp_loader import exportar_sav
 
 from ui import components as c
-from ui.context import obtener_config, obtener_estado
+from ui.context import obtener_config, obtener_estado, sesion
 
 EJEMPLOS_SQL = {
     "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
@@ -25,6 +27,11 @@ def _aplicar_ejemplo_sql():
     st.session_state["sql_consulta"] = EJEMPLOS_SQL.get(etiqueta, "")
 
 
+def _pestana(tab):
+    """Context manager no-op si la pestana no se creo para este rol."""
+    return tab if tab is not None else contextlib.nullcontext()
+
+
 def principal():
     cfg, data, analyzer, predictor = obtener_estado()
     c.cabecera(
@@ -33,12 +40,31 @@ def principal():
         icono=":material/database:",
     )
 
-    tab_importar, tab_etl, tab_esquema, tab_calidad, tab_pspp, tab_conectores, tab_sql = st.tabs(
-        ["Importar / detectar", "Procesar (ETL)", "Esquema de datos",
-         "Calidad de datos", "Integracion PSPP/SPSS", "Conectores ERP/SQL",
-         "Consultas SQL"],
-        key="tabs_datos", on_change="rerun",
-    )
+    # Conectores y consola SQL son de administracion: las pestanas no se crean
+    # para quien no tiene el permiso. El permiso igual se vuelve a comprobar
+    # dentro de ui.context, porque ocultar la pestana no protege la operacion.
+    s = sesion()
+    puede_conectores = s.puede(auth.PERMISO_CONECTORES)
+    puede_sql = s.puede(auth.PERMISO_CONSOLA_SQL)
+
+    titulos = ["Importar / detectar", "Procesar (ETL)", "Esquema de datos",
+               "Calidad de datos", "Integracion PSPP/SPSS"]
+    if puede_conectores:
+        titulos.append("Conectores ERP/SQL")
+    if puede_sql:
+        titulos.append("Consultas SQL")
+
+    tabs = st.tabs(titulos, key="tabs_datos", on_change="rerun")
+    tab_importar, tab_etl, tab_esquema, tab_calidad, tab_pspp = tabs[:5]
+    tab_conectores = tabs[5] if puede_conectores else None
+    tab_sql = tabs[5 + int(puede_conectores)] if puede_sql else None
+
+    if not puede_conectores or not puede_sql:
+        st.info(
+            "Las pestanas de conectores y consultas SQL son funciones de "
+            "administracion: un administrador puede otorgarte ese acceso.",
+            icon=":material/admin_panel_settings:",
+        )
 
     # ---------------------------------------------------------------
     #  PESTAÑA: IMPORTAR / DETECTAR
@@ -340,8 +366,8 @@ de la pestana *Procesar (ETL)*.
     # ---------------------------------------------------------------
     #  PESTAÑA: CONECTORES ERP/SQL (Fase 2)
     # ---------------------------------------------------------------
-    with tab_conectores:
-        if tab_conectores.open:
+    with _pestana(tab_conectores):
+        if tab_conectores is not None and tab_conectores.open:
             from pathlib import Path as _Path
 
             from src.core.conector_sql import (conectores_desde_snapshot,
@@ -506,11 +532,17 @@ de la pestana *Procesar (ETL)*.
     # ---------------------------------------------------------------
     #  PESTAÑA: CONSULTAS SQL
     # ---------------------------------------------------------------
-    with tab_sql:
-        if tab_sql.open:
+    with _pestana(tab_sql):
+        if tab_sql is not None and tab_sql.open:
             st.markdown("### Consultas SQL sobre tus datos (DuckDB)")
             st.caption("Consulta todas las tablas en lenguaje SQL. "
                        "Util para informacion avanzada y portatil.")
+            st.info(
+                "Modo **solo lectura**: se acepta una sentencia `SELECT` por vez. "
+                "Las escrituras y el acceso a archivos o a la red quedan "
+                "bloqueados para no alterar el almacen.",
+                icon=":material/read_only:",
+            )
             st.selectbox(
                 "Ejemplos de consultas", list(EJEMPLOS_SQL), key="sql_ejemplo_lbl",
                 on_change=_aplicar_ejemplo_sql,

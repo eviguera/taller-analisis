@@ -12,6 +12,7 @@ por lo que cada empresa tiene su almacen, su cache y sus modelos aislados.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import List, Optional
@@ -24,6 +25,44 @@ from .core.config_manager import cargar_config, guardar_config
 RAIZ_WORKSPACES = Path(__file__).resolve().parent.parent / "workspaces"
 
 CLAVE_PRINCIPAL = "principal"
+
+# La clave se usa como nombre de carpeta y se concatena con rutas del sistema de
+# archivos, asi que se restringe a un alfabeto seguro: sin separadores, sin "..",
+# sin bytes de control ni caracteres exoticos del sistema de archivos.
+PATRON_CLAVE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def normalizar_clave(clave: str) -> str:
+    """Normaliza una clave a su forma canonica: minusculas y guiones.
+
+    Solo sustituye espacios por guiones. NO translitera caracteres peligrosos
+    (``/``, ``.``, ``\\``, nul): esos se dejan intactos para que
+    ``validar_clave`` los rechace de forma explicita en vez de crear en
+    silencio una carpeta con otro nombre.
+    """
+    texto = (clave or "").strip().lower().replace(" ", "-").replace("\t", "-")
+    while "--" in texto:
+        texto = texto.replace("--", "-")
+    return texto.strip("-")
+
+
+def validar_clave(clave: str) -> str:
+    """Valida una clave de workspace y la devuelve ya normalizada.
+
+    Lanza ``ValueError`` si no cumple ``PATRON_CLAVE``. Es la unica puerta de
+    entrada antes de construir rutas con la clave, de modo que ``..``,
+    ``/`` y rutas absolutas nunca lleguen al sistema de archivos.
+    """
+    clave = normalizar_clave(clave)
+    if not clave:
+        raise ValueError("La clave del workspace no puede estar vacia")
+    if not PATRON_CLAVE.match(clave):
+        raise ValueError(
+            "Clave de workspace invalida: usa solo minusculas, digitos, guion "
+            "(-) y guion bajo (_), empezando por letra o digito (max. 64). "
+            "No se admiten rutas, barras ni puntos."
+        )
+    return clave
 
 
 def listar_workspaces() -> List[str]:
@@ -38,11 +77,12 @@ def listar_workspaces() -> List[str]:
 
 
 def ruta_workspace(clave: str) -> Path:
-    return RAIZ_WORKSPACES / clave
+    """Ruta absoluta del workspace. Valida la clave antes de construirla."""
+    return RAIZ_WORKSPACES / validar_clave(clave)
 
 
 def existe(clave: str) -> bool:
-    return (RAIZ_WORKSPACES / clave / "config" / "config.yaml").exists()
+    return (ruta_workspace(clave) / "config" / "config.yaml").exists()
 
 
 def config_workspace(clave: str) -> AppConfig:
@@ -66,9 +106,7 @@ def crear_workspace(clave: str, nombre: Optional[str] = None,
     una plantilla de vertical (taller, clinica, retail, ...) con sus valores de
     inventario, mantenimiento, alertas y tema de marca.
     """
-    clave = clave.strip().lower().replace(" ", "_")
-    if not clave:
-        raise ValueError("La clave del workspace no puede estar vacia")
+    clave = validar_clave(clave)
     if clave == CLAVE_PRINCIPAL:
         raise ValueError("'principal' es el workspace raiz y no puede recrearse")
 
@@ -155,15 +193,20 @@ def crear_workspace(clave: str, nombre: Optional[str] = None,
 
 
 def workspace_activo(selector=None) -> str:
-    """Workspace activo: env GIRO_WORKSPACE > selector (callable) > 'principal'."""
+    """Workspace activo: env GIRO_WORKSPACE > selector (callable) > 'principal'.
+
+    La clave se valida siempre. Un valor invalido (env mal configurado o
+    selector manipulado) lanza ``ValueError`` en vez de caer silenciosamente en
+    'principal', para no mostrar los datos de otra empresa por accidente.
+    """
     import os
     desde_env = os.environ.get("GIRO_WORKSPACE", "")
     if desde_env:
-        return desde_env
+        return validar_clave(desde_env)
     if callable(selector):
         sel = selector()
         if sel:
-            return str(sel)
+            return validar_clave(str(sel))
     return CLAVE_PRINCIPAL
 
 
