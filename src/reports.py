@@ -13,13 +13,9 @@ from .analyzer import Analyzer
 from .predictions import Predictor
 from .recomendaciones import next_best_action
 from .core.config_manager import cargar_config
+from .reporting.formato import miles as _miles
 
 plt.rcParams["font.family"] = "DejaVu Sans"
-
-
-def _miles(valor, decimales=0):
-    """Formatea un numero con punto como separador de miles (es-CL)."""
-    return f"{valor:,.{decimales}f}".replace(",", ".")
 
 
 def _fig_a_base64(fig):

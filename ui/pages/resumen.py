@@ -109,10 +109,6 @@ def principal():
          "Ingreso promedio por factura"),
         ("Clientes activos", f"{n_clientes}", None, None,
          "Clientes distintos en el periodo"),
-        ("Vehiculos atendidos", f"{n_vehiculos}", None, None,
-         "Vehiculos distintos en el periodo"),
-        ("Valor x cliente", c.moneda(total_ingresos / max(n_clientes, 1), cfg.moneda),
-         None, None, "Ingresos entre clientes activos"),
     ])
 
     # ----- Tendencia de ingresos y facturas -----

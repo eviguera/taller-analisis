@@ -3,7 +3,7 @@
 # y la landing de ventas (Streamlit, 8502) en el mismo proceso.
 # Si cualquiera de los dos muere, el contenedor se detiene (los llaveros
 # de orquestacion podran reiniciarlo).
-set -e
+set -euo pipefail
 
 GIRO_DASH_PORT="${GIRO_DASH_PORT:-8501}"
 GIRO_LANDING_PORT="${GIRO_LANDING_PORT:-8502}"
@@ -17,7 +17,10 @@ fi
 limpiar() {
     trap - TERM INT
     kill "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
-    wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
+    timeout 10 wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || {
+        kill -KILL "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
+        wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
+    }
 }
 trap limpiar TERM INT
 

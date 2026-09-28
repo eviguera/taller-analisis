@@ -72,8 +72,11 @@ def _conectar_sqlalchemy(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
                          "(p. ej. postgresql://user:pass@host:5432/db)")
     if not conector.consulta:
         raise ValueError("Un conector SQL requiere una consulta SQL")
-    engine = create_engine(dsn)
+    engine = create_engine(dsn, connect_args={"connect_timeout": 10})
     try:
+        consulta = conector.consulta.strip().upper()
+        if not consulta.startswith("SELECT"):
+            raise ValueError("Los conectores SQL solo permiten consultas SELECT (solo lectura)")
         with engine.connect() as conn:
             return pd.read_sql_query(conector.consulta, conn)
     finally:
@@ -150,7 +153,7 @@ def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         ruta = _resolver_fuente(cfg, conector)
         if not ruta.exists():
             raise FileNotFoundError(f"No existe el CSV: {ruta}")
-        return pd.read_csv(ruta, **({} if conector.parametros else {}))
+        return pd.read_csv(ruta, **conector.parametros)
     if motor == "excel":
         ruta = _resolver_fuente(cfg, conector)
         if not ruta.exists():
@@ -163,7 +166,7 @@ def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         url = str(conector.fuente or "")
         if not url:
             raise ValueError("Un conector url requiere una URL")
-        return pd.read_csv(url, **({} if conector.parametros else {}))
+        return pd.read_csv(url, **conector.parametros)
     raise ValueError(f"Motor de conector no soportado: '{motor}'")
 
 

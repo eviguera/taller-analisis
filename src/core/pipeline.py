@@ -18,6 +18,7 @@ import pandas as pd
 
 from .catalog import escanear_directorio, vincular_archivos_a_datasets, ArchivoDetectado
 from .config import AppConfig, DatasetConfig
+from .config_manager import ETIQUETAS_ESPERADAS
 from .hechos import construir_factura_detalle
 from ..loaders import get_loader, CargaResultado
 from ..storage import DataStore
@@ -82,6 +83,69 @@ def _cargar_dataset(cfg: AppConfig, dcfg: DatasetConfig, ruta: Path) -> CargaRes
     return loader.cargar(ruta, **kwargs)
 
 
+def _cargar_archivos_locales(cfg: AppConfig, directorio: Path,
+                             asignaciones: Dict[str, Path],
+                             resultado: ResultadoETL) -> Dict[str, pd.DataFrame]:
+    """Carga y normaliza los archivos locales del directorio de datos."""
+    tablas = {}
+    for nombre, dcfg in cfg.datasets.items():
+        ruta = asignaciones.get(nombre) or (directorio / dcfg.archivo if dcfg.archivo else None)
+        if ruta is None or not ruta.exists():
+            resultado.errores[nombre] = f"archivo no encontrado: {dcfg.archivo or nombre}"
+            continue
+        try:
+            cr = _cargar_dataset(cfg, dcfg, ruta)
+            df = _normalizar_columnas(cr.datos, dcfg.mapeo)
+            df = _limpiar(df, nombre)
+            esperadas = ETIQUETAS_ESPERADAS.get(nombre, set())
+            faltantes = esperadas - set(df.columns)
+            if faltantes:
+                resultado.advertencias[nombre] = (
+                    f"columnas faltantes: {', '.join(sorted(faltantes))}"
+                )
+            tablas[nombre] = df
+            resultado.tablas_registradas[nombre] = len(df)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Error al cargar %s", nombre)
+            resultado.errores[nombre] = f"{type(e).__name__}: {e}"
+    return tablas
+
+
+def _ejecutar_conectores_externos(cfg: AppConfig, tablas: Dict[str, pd.DataFrame],
+                                  resultado: ResultadoETL) -> Dict[str, pd.DataFrame]:
+    """Ejecuta conectores externos para llenar datasets ausentes o reemplazar."""
+    if not getattr(cfg, "conectores", None):
+        return tablas
+    from .conector_sql import ejecutar_conectores
+    conectados, errores_con = ejecutar_conectores(cfg, ya_cargados=set(tablas))
+    tablas.update(conectados)
+    resultado.tablas_registradas.update({n: len(df) for n, df in conectados.items()})
+    for nombre, err in errores_con.items():
+        resultado.advertencias[f"conector:{nombre}"] = err
+    return tablas
+
+
+def _construir_almacen(store, tablas: Dict[str, pd.DataFrame],
+                       resultado: ResultadoETL) -> None:
+    """Registra tablas, construye hechos y vistas en el DataStore."""
+    from time import time
+    store.registrar_tablas(tablas)
+
+    if "facturas" in tablas and not tablas["facturas"].empty:
+        t1 = time()
+        hechos = construir_factura_detalle(
+            tablas["facturas"], tablas.get("servicios"))
+        if not hechos.empty:
+            store.registrar_tabla("factura_detalle", hechos, cache=True)
+            store.registrar_tabla_core("factura_detalle", hechos)
+        resultado.tiempo_estructura = round(time() - t1, 3)
+
+    t1 = time()
+    resultado.estructura = store.construir_estructura(tablas)
+    resultado.tiempo_estructura = round(resultado.tiempo_estructura + (time() - t1), 3)
+    resultado.n_vistas = len(VISTAS_ANALITICA)
+
+
 def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
                  guardar: bool = True, usar_cache: bool = True) -> ResultadoETL:
     """Ejecuta el pipeline completo y devuelve el resultado."""
@@ -96,54 +160,13 @@ def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
     resultado.asignaciones = asignaciones
 
     store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=usar_cache) if guardar else None
-    tablas = {}
 
-    for nombre, dcfg in cfg.datasets.items():
-        ruta = asignaciones.get(nombre) or (directorio / dcfg.archivo if dcfg.archivo else None)
-        if ruta is None or not ruta.exists():
-            resultado.errores[nombre] = f"archivo no encontrado: {dcfg.archivo or nombre}"
-            continue
-        try:
-            cr = _cargar_dataset(cfg, dcfg, ruta)
-            df = _normalizar_columnas(cr.datos, dcfg.mapeo)
-            df = _limpiar(df, nombre)
-            tablas[nombre] = df
-            resultado.tablas_registradas[nombre] = len(df)
-        except Exception as e:  # noqa: BLE001
-            log.exception("Error al cargar %s", nombre)
-            resultado.errores[nombre] = f"{type(e).__name__}: {e}"
-
-    # --- Conectores externos (Fase 2): llenan datasets ausentes o reemplazan
-    # la fuente local si el conector tiene `forzar: true`. Los fallos de un
-    # conector opcional no rompen el ETL (se reportan como advertencia).
-    if getattr(cfg, "conectores", None):
-        from .conector_sql import ejecutar_conectores
-        conectados, errores_con = ejecutar_conectores(cfg, ya_cargados=set(tablas))
-        tablas.update(conectados)
-        resultado.tablas_registradas.update({n: len(df) for n, df in conectados.items()})
-        for nombre, err in errores_con.items():
-            resultado.advertencias[f"conector:{nombre}"] = err
+    tablas = _cargar_archivos_locales(cfg, directorio, asignaciones, resultado)
+    tablas = _ejecutar_conectores_externos(cfg, tablas, resultado)
 
     if store is not None:
         try:
-            store.registrar_tablas(tablas)
-
-            # --- Hechos relacionales (Idea 1) --------------------------
-            # Se contruyen antes de las vistas para que las vistas analiticas
-            # puedan referenciar core.factura_detalle.
-            if "facturas" in tablas and not tablas["facturas"].empty:
-                t1 = time()
-                hechos = construir_factura_detalle(
-                    tablas["facturas"], tablas.get("servicios"))
-                if not hechos.empty:
-                    store.registrar_tabla("factura_detalle", hechos, cache=True)
-                    store.registrar_tabla_core("factura_detalle", hechos)
-                resultado.tiempo_estructura = round(time() - t1, 3)
-
-            t1 = time()
-            resultado.estructura = store.construir_estructura(tablas)
-            resultado.tiempo_estructura = round(resultado.tiempo_estructura + (time() - t1), 3)
-            resultado.n_vistas = len(VISTAS_ANALITICA)
+            _construir_almacen(store, tablas, resultado)
         finally:
             store.cerrar()
 
@@ -205,7 +228,8 @@ def _leer_cache_fresco(cfg: AppConfig, nombre: str, ruta_origen: Path) -> Option
         return None
     try:
         return pd.read_parquet(archivo_cache)
-    except Exception:
+    except Exception as e:
+        log.warning("No se pudo leer cache parquet %s: %s", archivo_cache, e)
         return None
 
 

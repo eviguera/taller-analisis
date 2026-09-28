@@ -145,21 +145,30 @@ def tabla(df, columnas=None, titulos=None, limit=12, moneda_cols=None,
     titulos = titulos or {c: c for c in columnas}
     resaltar = resaltar or {}
 
+    # Construir celdas vectorizadas por columna
+    cell_data = {}
+    for col in columnas:
+        serie = df[col]
+        if moneda_cols and col in moneda_cols:
+            texto = serie.apply(lambda v: moneda(v, moneda_cols[col] or "CLP") if isinstance(v, (int, float)) else str(v))
+        elif pct_cols and col in pct_cols:
+            texto = serie.apply(lambda v: f"{float(v) * 100:.0f}%" if isinstance(v, (int, float)) else str(v))
+        else:
+            texto = serie.apply(lambda v: miles(v) if isinstance(v, (int, float)) else str(v))
+        # El texto de la celda viene de los datos del cliente (nombres,
+        # productos, servicios): va escapado siempre.
+        texto = texto.apply(escape)
+        if col in resaltar:
+            mask = serie.isin(resaltar[col])
+            td_parts = [f"<td class='{'cell-alta' if m else ''}'>{val}</td>" for val, m in zip(texto, mask)]
+            cell_data[col] = td_parts
+        else:
+            cell_data[col] = [f"<td>{v}</td>" for v in texto]
+
+    # Combinar en filas HTML
     filas = ""
-    for _, row in df.iterrows():
-        celdas = ""
-        for col in columnas:
-            valor = row[col]
-            if moneda_cols and col in moneda_cols:
-                texto = moneda(valor, moneda_cols[col] or "CLP")
-            elif pct_cols and col in pct_cols:
-                texto = f"{float(valor) * 100:.0f}%" if isinstance(valor, (int, float)) else str(valor)
-            else:
-                texto = miles(valor) if isinstance(valor, (int, float)) else str(valor)
-            clase = "cell-alta" if col in resaltar and valor in resaltar[col] else ""
-            # El texto de la celda viene de los datos del cliente (nombres,
-            # productos, servicios): va escapado siempre.
-            celdas += f"<td class='{clase}'>{escape(texto)}</td>"
+    for i in range(len(df)):
+        celdas = "".join(cell_data[col][i] for col in columnas)
         filas += f"<tr>{celdas}</tr>"
 
     cab = "".join(f"<th>{escape(str(titulos.get(c, c)))}</th>" for c in columnas)

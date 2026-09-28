@@ -110,7 +110,7 @@ def evaluar_alertas(cfg: AppConfig, data: dict) -> List[dict]:
             pendientes["dias"] = (pd.Timestamp.today() - pendientes["fecha"]).dt.days
             vencidas = pendientes[pendientes["dias"] > dias]
             if not vencidas.empty:
-                monto_pendiente = float(pendientes["total"].sum()) if "total" in pendientes else 0.0
+                monto_pendiente = float(vencidas["total"].sum()) if "total" in vencidas else 0.0
                 alertas.append({
                     "tipo": "facturas_pendientes",
                     "severidad": "media",

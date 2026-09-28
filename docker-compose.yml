@@ -30,11 +30,11 @@ services:
       GIRO_WORKSPACE: "principal"
       # Firma de las cookies de sesion. Sin valor, se genera una al vuelo.
       GIRO_AUTH_SECRET: "${GIRO_AUTH_SECRET:-}"
-    # volumes:
-    #   - giro_data:/app/data
-    #   - giro_workspaces:/app/workspaces
-    #   - giro_reportes:/app/reports
-    #   - ./usuarios.yaml:/app/config/usuarios.yaml   # registro de usuarios
+    volumes:
+      - giro_data:/app/data
+      - giro_workspaces:/app/workspaces
+      - giro_reportes:/app/reports
+      - ./usuarios.yaml:/app/config/usuarios.yaml   # registro de usuarios
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (8501, 8502)]"]
@@ -43,7 +43,7 @@ services:
       start_period: 30s
       retries: 3
 
-# volumes:
-#   giro_data:
-#   giro_workspaces:
-#   giro_reportes:
+volumes:
+  giro_data:
+  giro_workspaces:
+  giro_reportes:

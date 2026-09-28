@@ -28,8 +28,9 @@ RUN groupadd --system --gid 1001 giro \
  && chown -R giro:giro /app
 
 # Dependencias primero (mejor cache de capas Docker).
-COPY requirements.txt requirements.lock ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Usa requirements.lock para builds reproducibles.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 # Codigo, configuracion y datos fuente (.dockerignore deja fuera secretos,
 # datos de tenants y modelos entrenados).

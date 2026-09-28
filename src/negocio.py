@@ -203,7 +203,9 @@ def roi_suscripcion(analyzer, cfg) -> list:
     eventos = escenarios_proyeccion(analyzer, cfg) or {}
     delta_ingresos = float(eventos.get("delta_ingresos", 0.0))
     recuperable = valor_recuperable(analyzer, cfg)
-    valor_total = delta_ingresos + recuperable
+    # Evitar doble conteo: delta_ingresos ya captura el efecto de retención.
+    # Usamos el mayor de los dos como proxy conservador del valor generado.
+    valor_total = max(delta_ingresos, recuperable)
     filas = []
     for nombre, precio_mensual in planes_activos(cfg).items():
         costo_anual = float(precio_mensual) * 12.0

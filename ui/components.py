@@ -132,12 +132,41 @@ def kpi_grid(items):
             )
 
 
-def vacio(mensaje, icono=":material/info:", detalle=None):
-    """Estado vacio con tono informativo ligero."""
+def vacio(mensaje, icono=":material/info:", detalle=None, cta=None):
+    """Estado vacio con tono informativo ligero y CTA opcional."""
     with st.container(border=True):
         st.markdown(f"**{icono} {mensaje}**")
         if detalle:
             st.caption(detalle)
+        if cta:
+            st.caption(f"→ {cta}")
+
+
+# ------------------------------------------------------------------
+#  Mensajes y notificaciones
+# ------------------------------------------------------------------
+
+def mensaje_error(msg, detalle=None):
+    """Muestra un error con icono y detalle opcional usando st.error()."""
+    texto = f"**{msg}**"
+    if detalle:
+        texto += f"\n\n{detalle}"
+    st.error(texto, icon=":material/error:")
+
+
+def confirmacion_exito(msg, detalle=None):
+    """Muestra un exito con icono y detalle opcional usando st.success()."""
+    texto = f"**{msg}**"
+    if detalle:
+        texto += f"\n\n{detalle}"
+    st.success(texto, icon=":material/check_circle:")
+
+
+def vacio_con_cta(mensaje, cta, icono=":material/info:"):
+    """Estado vacio con CTA prominente (boton) para guiar al usuario."""
+    with st.container(border=True):
+        st.markdown(f"**{icono} {mensaje}**")
+        st.button(cta, type="primary", use_container_width=True)
 
 
 # ------------------------------------------------------------------
@@ -150,7 +179,7 @@ def formato_archivo(fmt):
         "csv": "#2563eb", "excel": "#059669", "sav": "#7c3aed",
         "zsav": "#7c3aed", "por": "#0ea5e9", "parquet": "#64748b",
     }.get(fmt, "#64748b")
-    return f'<span style="background:{color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;">{fmt.upper()}</span>'
+    return f'<span style="background:{color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">{fmt.upper()}</span>'
 
 
 def badge(texto, tipo="info"):

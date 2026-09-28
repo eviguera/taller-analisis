@@ -150,8 +150,7 @@ def _sidebar_completa(sesion: auth.Sesion):
     with st.sidebar:
         _selector_workspace(sesion)
         cfg = obtener_config()
-        st.markdown("**Personalizar**")
-        with st.container(border=True):
+        with st.expander("Personalizar", expanded=False):
             nuevo_nombre = st.text_input(
                 "Nombre del negocio",
                 value=cfg.negocio_nombre,
@@ -197,6 +196,11 @@ def _sidebar_completa(sesion: auth.Sesion):
            acento != (cfg.tema or {}).get("color_acento"):
             st.cache_resource.clear()
             st.rerun()
+
+        # Wizard de primer uso: solo si no hay datos cargados
+        if not st.session_state.get("_onboarding_completado"):
+            from ui.pages.datos import _wizard_primer_uso
+            _wizard_primer_uso()
         cfg = obtener_config()
 
         st.space("medium")

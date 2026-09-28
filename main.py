@@ -51,8 +51,8 @@ def _formato(valor, dec=0):
 
 
 def _moneda(valor, cfg):
-    s = {"MXN": "$", "USD": "$", "EUR": "€"}.get(cfg.moneda, "$")
-    return f"{s}{_formato(valor, 2)}"
+    from ui.components import moneda as _m
+    return _m(valor, cfg.moneda)
 
 
 def cmd_resumen(args):

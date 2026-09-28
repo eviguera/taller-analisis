@@ -15,7 +15,7 @@ class CSVLoader(BaseLoader):
         if sep is None:
             sep = "\t" if str(ruta).lower().endswith(".tsv") else ","
         try:
-            df = pd.read_csv(ruta, sep=sep, encoding=encoding or "utf-8")
+            df = pd.read_csv(ruta, sep=sep, encoding=encoding or "utf-8-sig")
         except UnicodeDecodeError:
             df = pd.read_csv(ruta, sep=sep, encoding="latin-1")
         except pd.errors.ParserError:

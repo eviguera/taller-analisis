@@ -46,10 +46,15 @@ def principal():
             combinado = pd.concat([hist, pred])
             with c.panel("Ingresos historicos y proyeccion", "Historial real frente a proyeccion",
                          icono=":material/trending_up:"):
-                st.plotly_chart(c.grafico_linea(
+                fig = c.grafico_linea(
                     combinado, "Periodo", "Valor", color="tipo",
                     etiquetas={"Periodo": "Mes", "Valor": "Ingresos"},
-                ), width="stretch", height="stretch")
+                )
+                # Linea separadora entre historico y prediccion
+                if not hist.empty and not pred.empty:
+                    fig.add_vline(x=len(hist) - 0.5, line_dash="dash",
+                                  line_color="gray", annotation_text="Prediccion")
+                st.plotly_chart(fig, width="stretch", height="stretch")
 
             col1, col2 = st.columns(2, vertical_alignment="center")
             with col1:

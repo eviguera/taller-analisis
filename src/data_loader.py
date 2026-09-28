@@ -91,8 +91,8 @@ def load_inventario(path: Optional[Path] = None):
     return _cargar_tabla("inventario", path)
 
 
-def merge_datasets(data):
-    """Une facturas + clientes + vehiculos en un DataFrame analitico."""
+def enriquecer_facturas(data):
+    """Enriquece facturas con dimensiones de clientes y vehiculos (left join)."""
     facturas = data["facturas"].copy() if "facturas" in data else pd.DataFrame()
     if facturas.empty:
         return pd.DataFrame()

@@ -151,7 +151,7 @@ def principal():
                                     help="Etiqueta impresa en la portada.")
         with col_g3:
             st.space("small")
-            generar = st.button("Generar", type="primary",
+            generar = st.button("Generar reporte", type="primary",
                                 icon=":material/auto_awesome:", width="stretch",
                                 key="rpt_generar")
 

@@ -70,73 +70,114 @@ def proximo_servicio(data, cfg) -> pd.DataFrame:
     # Ultima visita por vehiculo
     ultima_visita = hechos.groupby("vehiculo_id")["fecha"].max().to_dict() if not hechos.empty else {}
 
-    filas = []
-    for _, v in vehiculos.iterrows():
-        vid = v.get("id")
-        km = float(v.get("kilometraje", 0) or 0)
-        edad = _edad_vehiculo_anios(v.get("anio"), hoy)
-        ultima = ultima_visita.get(vid)
-        meses_ultima = _meses_desde(ultima, hoy) if ultima is not None else 999
-        cliente = None
-        if "cliente_id" in v.index and "clientes" in data:
-            cli = data["clientes"]
-            m = cli[cli["id"] == v["cliente_id"]]
-            if not m.empty:
-                cliente = str(m.iloc[0].get("nombre", ""))
+    # Vectorizar: cross-join entre vehiculos e intervalos
+    vehiculos = vehiculos.copy()
+    vehiculos["_km"] = vehiculos["kilometraje"].fillna(0).astype(float)
+    vehiculos["_edad"] = vehiculos["anio"].apply(lambda a: _edad_vehiculo_anios(a, hoy))
+    vehiculos["_ultima"] = vehiculos["id"].map(ultima_visita)
+    vehiculos["_meses_ultima"] = vehiculos["_ultima"].apply(lambda f: _meses_desde(f, hoy) if pd.notna(f) else 999)
 
-        candidatos = []
-        for servicio, intervalo in intervalos.items():
-            meses_desde_serv = 999
-            if not hechos.empty:
-                filas_s = hechos[
-                    (hechos["vehiculo_id"] == vid)
-                    & (hechos["servicio"].astype(str).str.lower().str.contains(
-                        servicio, na=False))]
-                if not filas_s.empty:
-                    meses_desde_serv = _meses_desde(filas_s["fecha"].max(), hoy)
+    # Cliente por vehiculo
+    if "cliente_id" in vehiculos.columns and "clientes" in data:
+        cli = data["clientes"]
+        cli_map = cli.set_index("id")["nombre"].to_dict()
+        vehiculos["_cliente"] = vehiculos["cliente_id"].map(cli_map).fillna("")
+    else:
+        vehiculos["_cliente"] = ""
 
-            pendiente = (intervalo - meses_desde_serv)
-            if meses_desde_serv >= intervalo:
-                candidatos.append({
-                    "servicio": servicio.title(),
-                    "nota": "vencido",
-                    "urgencia": min(pendiente, 0) / intervalo,  # negativo: mas vencido
-                    "meses_desde": meses_desde_serv,
-                    "intervalo": intervalo,
-                })
-            elif meses_desde_serv < intervalo and 0 <= pendiente <= 2:
-                candidatos.append({
-                    "servicio": servicio.title(),
-                    "nota": "proximo",
-                    "urgencia": pendiente / intervalo,
-                    "meses_desde": meses_desde_serv,
-                    "intervalo": intervalo,
-                })
+    # Cross-join con intervalos
+    intervalos_df = pd.DataFrame({"servicio": list(intervalos.keys()), "intervalo": list(intervalos.values())})
+    cross = vehiculos.merge(intervalos_df, how="cross")
 
-        candidatos.sort(key=lambda c: c["urgencia"])
-        top = candidatos[:pendientes_considerar]
-        if top:
-            primero = top[0]
-            filas.append({
-                "vehiculo_id": vid,
-                "cliente": cliente or "—",
-                "marca": v.get("marca", ""),
-                "modelo": v.get("modelo", ""),
-                "anio": v.get("anio", ""),
-                "placa": v.get("placa", ""),
-                "kilometraje": km,
-                "edad_anios": round(edad, 1),
-                "dias_sin_visita": int(max(0, meses_ultima * 30)),
-                "servicio_sugerido": primero["servicio"],
-                "nota": primero["nota"],
-                "meses_estimados": round(primero["meses_desde"], 1),
-                "intervalo_meses": primero["intervalo"],
-                "prioridad": _prioridad_servicio(primero, km, edad),
-            })
+    # Calcular meses_desde_serv vectorizado
+    if not hechos.empty:
+        hechos_serv = hechos.copy()
+        hechos_serv["_servicio_lower"] = hechos_serv["servicio"].astype(str).str.lower()
+        # Para cada servicio en intervalos, buscar coincidencias
+        meses_desde_list = []
+        for servicio in intervalos.keys():
+            mask = hechos_serv["_servicio_lower"].str.contains(servicio, na=False)
+            if mask.any():
+                filas_s = hechos_serv[mask]
+                max_por_vehiculo = filas_s.groupby("vehiculo_id")["fecha"].max()
+                meses_desde_list.append(max_por_vehiculo.rename(servicio))
+        if meses_desde_list:
+            meses_desde_df = pd.concat(meses_desde_list, axis=1)
+            meses_desde_df = meses_desde_df.reset_index().rename(columns={"index": "vehiculo_id"})
+            cross = cross.merge(meses_desde_df, left_on="id", right_on="vehiculo_id", how="left")
+            for servicio in intervalos.keys():
+                if servicio in cross.columns:
+                    cross[f"_meses_{servicio}"] = cross[servicio].apply(lambda f: _meses_desde(f, hoy) if pd.notna(f) else 999)
+                else:
+                    cross[f"_meses_{servicio}"] = 999
+        else:
+            for servicio in intervalos.keys():
+                cross[f"_meses_{servicio}"] = 999
+    else:
+        for servicio in intervalos.keys():
+            cross[f"_meses_{servicio}"] = 999
 
-    df = pd.DataFrame(filas)
-    if not df.empty:
+    # Calcular candidatos vectorizados usando melt para evitar apply(axis=1)
+    meses_cols = [f"_meses_{s}" for s in intervalos.keys()]
+    cross_melted = cross.melt(
+        id_vars=["id", "intervalo", "servicio", "_km", "_edad", "_meses_ultima", "_cliente", "marca", "modelo", "anio", "placa"],
+        value_vars=meses_cols,
+        var_name="_servicio_var",
+        value_name="_meses_desde_serv"
+    )
+    cross_melted["_servicio_cross"] = cross_melted["_servicio_var"].str.replace("_meses_", "", regex=False)
+    cross_melted = cross_melted[cross_melted["_servicio_cross"] == cross_melted["servicio"]].copy()
+    cross_melted["_pendiente"] = cross_melted["intervalo"] - cross_melted["_meses_desde_serv"]
+
+    # Filtrar candidatos
+    vencido_mask = cross_melted["_meses_desde_serv"] >= cross_melted["intervalo"]
+    proximo_mask = (cross_melted["_meses_desde_serv"] < cross_melted["intervalo"]) & (cross_melted["_pendiente"] >= 0) & (cross_melted["_pendiente"] <= 2)
+    cross_melted = cross_melted[vencido_mask | proximo_mask].copy()
+
+    # Calcular urgencia
+    cross_melted["_urgencia"] = np.where(
+        cross_melted["_meses_desde_serv"] >= cross_melted["intervalo"],
+        np.minimum(cross_melted["_pendiente"], 0) / cross_melted["intervalo"],
+        cross_melted["_pendiente"] / cross_melted["intervalo"]
+    )
+    cross_melted["_nota"] = np.where(cross_melted["_meses_desde_serv"] >= cross_melted["intervalo"], "vencido", "proximo")
+    cross_melted["_servicio_title"] = cross_melted["servicio"].str.title()
+
+    # Ordenar por urgencia y tomar top N por vehiculo
+    cross_melted = cross_melted.sort_values("_urgencia")
+    top = cross_melted.groupby("id").head(pendientes_considerar)
+
+    # Construir resultado
+    if not top.empty:
+        primero = top.groupby("id").first().reset_index()
+        df = pd.DataFrame({
+            "vehiculo_id": primero["id"],
+            "cliente": primero["_cliente"].replace("", "—"),
+            "marca": primero.get("marca", ""),
+            "modelo": primero.get("modelo", ""),
+            "anio": primero.get("anio", ""),
+            "placa": primero.get("placa", ""),
+            "kilometraje": primero["_km"],
+            "edad_anios": primero["_edad"].round(1),
+            "dias_sin_visita": (primero["_meses_ultima"].clip(lower=0) * 30).astype(int),
+            "servicio_sugerido": primero["_servicio_title"],
+            "nota": primero["_nota"],
+            "meses_estimados": primero["_meses_desde_serv"].round(1),
+            "intervalo_meses": primero["intervalo"],
+        })
+        # Calcular prioridad vectorizada
+        df["_vencido_leve"] = (df["nota"] == "vencido") & (df["meses_estimados"] < df["intervalo_meses"] * 1.5)
+        df["_vencido_muy"] = (df["nota"] == "vencido") & (df["meses_estimados"] >= df["intervalo_meses"] * 1.5)
+        df["_km_alto"] = df["kilometraje"] >= 80000
+        df["_edad_alta"] = df["edad_anios"] >= 10
+        df["_km_muy_alto"] = df["kilometraje"] >= 150000
+        df["_edad_muy_alta"] = df["edad_anios"] >= 15
+        df["prioridad"] = 3 + df["_vencido_leve"].astype(int) + df["_vencido_muy"].astype(int) * 2 + df["_km_alto"].astype(int) + df["_edad_alta"].astype(int) + df["_km_muy_alto"].astype(int) + df["_edad_muy_alta"].astype(int)
+        df["prioridad"] = df["prioridad"].clip(upper=5)
+        df = df.drop(columns=["_vencido_leve", "_vencido_muy", "_km_alto", "_edad_alta", "_km_muy_alto", "_edad_muy_alta"])
         df = df.sort_values("prioridad", ascending=False)
+    else:
+        df = pd.DataFrame()
     return df
 
 
@@ -175,48 +216,85 @@ def next_best_action(data, cfg, n=25) -> pd.DataFrame:
     umbral_churn = float((cfg.alertas or {}).get("churn_riesgo_umbral", 0.60))
     hoy = pd.Timestamp.today()
 
-    filas = []
-    for _, r in rfm.iterrows():
-        nombre = str(r.get("nombre", ""))
-        prob = float(r.get("prob_churn", 0) or 0)
-        monto = float(r.get("monto", 0) or 0)
-        recencia = float(r.get("recencia", 0) or 0)
+    # Vectorizar next_best_action
+    rfm = rfm.copy()
+    rfm["_nombre"] = rfm["nombre"].astype(str)
+    rfm["_prob"] = rfm["prob_churn"].fillna(0).astype(float)
+    rfm["_monto"] = rfm["monto"].fillna(0).astype(float)
+    rfm["_recencia"] = rfm["recencia"].fillna(0).astype(float)
 
-        servicio = servicio_por_cliente.get(r.get("cliente_id"), "") or \
-            servicio_por_cliente.get(nombre, "") or servicio_por_cliente.get(str(r["nombre"]), "")
+    # Servicio por cliente (vectorizado con map)
+    rfm["_servicio"] = rfm["cliente_id"].map(servicio_por_cliente).fillna("")
+    mask_serv = rfm["_servicio"] == ""
+    rfm.loc[mask_serv, "_servicio"] = rfm.loc[mask_serv, "_nombre"].map(servicio_por_cliente).fillna("")
+    mask_serv = rfm["_servicio"] == ""
+    rfm.loc[mask_serv, "_servicio"] = rfm.loc[mask_serv, "_nombre"].astype(str).map(servicio_por_cliente).fillna("")
 
-        if prob >= umbral_churn:
-            accion, canal, mensaje = "Reactivar", "WhatsApp", MENSAJES["Reactivar"].format(nombre=nombre)
-        elif servicio:
-            accion, canal = "Recordatorio preventivo", "Email"
-            mensaje = MENSAJES["Recordatorio preventivo"].format(
-                nombre=nombre, vehiculo=servicio)
-        elif len(rfm) and monto >= float(rfm["monto"].quantile(0.8)):
-            accion, canal = "Fidelidad", "Email"
-            mensaje = MENSAJES["Fidelidad"].format(nombre=nombre)
+    # Determinar acción y canal (vectorizado con np.where)
+    monto_p80 = float(rfm["_monto"].quantile(0.8)) if len(rfm) else 0.0
+    rfm["_accion"] = np.where(
+        rfm["_prob"] >= umbral_churn,
+        "Reactivar",
+        np.where(
+            rfm["_servicio"] != "",
+            "Recordatorio preventivo",
+            np.where(
+                rfm["_monto"] >= monto_p80,
+                "Fidelidad",
+                "Upsell / servicio complementario"
+            )
+        )
+    )
+    rfm["_canal"] = np.where(
+        rfm["_prob"] >= umbral_churn,
+        "WhatsApp",
+        np.where(
+            rfm["_servicio"] != "",
+            "Email",
+            np.where(
+                rfm["_monto"] >= monto_p80,
+                "Email",
+                "WhatsApp"
+            )
+        )
+    )
+
+    # Mensajes fila por fila (cada cliente necesita su propio formato)
+    def _formatear_mensaje(row):
+        if row["_accion"] == "Reactivar":
+            return MENSAJES["Reactivar"].format(nombre=row["_nombre"])
+        elif row["_accion"] == "Recordatorio preventivo":
+            return MENSAJES["Recordatorio preventivo"].format(
+                nombre=row["_nombre"], vehiculo=row["_servicio"])
+        elif row["_accion"] == "Fidelidad":
+            return MENSAJES["Fidelidad"].format(nombre=row["_nombre"])
         else:
-            accion, canal = "Upsell / servicio complementario", "WhatsApp"
-            mensaje = MENSAJES["Upsell / servicio complementario"].format(
-                nombre=nombre, servicio=servicio or "una revision de mantenimiento")
+            return MENSAJES["Upsell / servicio complementario"].format(
+                nombre=row["_nombre"],
+                servicio=row["_servicio"] or "una revision de mantenimiento")
 
-        # Score de prioridad: riesgo + valor + inactividad
-        valor_pct = _percentil(rfm["monto"], monto)
-        prioridad = _ponderar(prob, 0.55) + _ponderar(valor_pct, 0.30) + _ponderar(min(recencia / 180, 1.0), 0.15)
+    rfm["_mensaje"] = rfm.apply(_formatear_mensaje, axis=1)
 
-        filas.append({
-            "cliente_id": r.get("cliente_id"),
-            "nombre": nombre,
-            "accion": accion,
-            "canal": canal,
-            "mensaje": mensaje,
-            "prioridad": round(prioridad, 3),
-            "prob_churn": round(prob, 3),
-            "monto": round(monto, 2),
-            "recencia_dias": int(recencia),
-            "servicio_sugerido": servicio or "",
-        })
+    # Prioridad vectorizada
+    rfm["_valor_pct"] = rfm["_monto"].apply(lambda m: _percentil(rfm["_monto"], m))
+    rfm["_prioridad"] = (
+        _ponderar(rfm["_prob"], 0.55) +
+        _ponderar(rfm["_valor_pct"], 0.30) +
+        _ponderar((rfm["_recencia"] / 180).clip(upper=1.0), 0.15)
+    )
 
-    df = pd.DataFrame(filas)
+    df = pd.DataFrame({
+        "cliente_id": rfm["cliente_id"],
+        "nombre": rfm["_nombre"],
+        "accion": rfm["_accion"],
+        "canal": rfm["_canal"],
+        "mensaje": rfm["_mensaje"],
+        "prioridad": rfm["_prioridad"].round(3),
+        "prob_churn": rfm["_prob"].round(3),
+        "monto": rfm["_monto"].round(2),
+        "recencia_dias": rfm["_recencia"].astype(int),
+        "servicio_sugerido": rfm["_servicio"],
+    })
     if not df.empty:
         df = df.sort_values("prioridad", ascending=False).head(n)
     return df
@@ -229,6 +307,6 @@ def _percentil(series, valor) -> float:
         return 0.0
 
 
-def _ponderar(valor: float, peso: float) -> float:
-    """Aporta ``valor * peso`` al score de prioridad de una accion."""
-    return float(valor) * float(peso)
+def _ponderar(valor, peso: float):
+    """Aporta ``valor * peso`` al score de prioridad. Acepta escalar o Serie."""
+    return valor * float(peso)

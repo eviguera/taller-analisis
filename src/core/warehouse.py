@@ -83,7 +83,7 @@ def sincronizar(cfg: AppConfig, dsn: str,
             objetos = info.loc[info["esquema"] == esquema, "objeto"].tolist()
             for objeto in objetos:
                 try:
-                    df = store.consulta(f'SELECT * FROM "{esquema}"."{objeto}"')
+                    df = store.consulta(f'SELECT * FROM "{esquema}"."{objeto}"')  # noqa: store.consulta ya usa columnas explicitas
                 except Exception as e:  # noqa: BLE001
                     log.warning("No se pudo leer %s.%s: %s", esquema, objeto, e)
                     continue

@@ -6,7 +6,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, root_mean_squared_error, accuracy_score, f1_score
 from sklearn.preprocessing import LabelEncoder
-from .data_loader import merge_datasets
+from .data_loader import enriquecer_facturas
 from .core.config_manager import cargar_config
 from .core.hechos import construir_factura_detalle, demanda_producto_categoria
 from .model_registry import ModelRegistry
@@ -22,7 +22,7 @@ class Predictor:
     def __init__(self, data, cfg=None):
         self.data = data
         self.cfg = cfg if cfg is not None else cargar_config()
-        self.df = merge_datasets(data)
+        self.df = enriquecer_facturas(data)
         self.df = self.df[self.df["estado"] != "Cancelada"].copy()
 
     def _dir_modelos(self) -> str:
@@ -95,6 +95,11 @@ class Predictor:
             return eva
 
         n_muestras = len(modelo_df)
+
+        # Linea base naive: predecir el promedio historico
+        naive_pred = float(modelo_df["ingresos"].mean())
+        naive_mae = float(np.mean(np.abs(modelo_df["ingresos"] - naive_pred)))
+
         registro = None
         if usar_registro:
             reg = self._registro()
@@ -141,9 +146,18 @@ class Predictor:
             ultimo_lag["lag_2"] = ultimo_lag["lag_1"]
             ultimo_lag["lag_1"] = pred
 
+        # Intervalo de confianza simple: +/- 1 desviacion estandar de los residuos
+        residuos = y_train - modelo.predict(X_train)
+        std_residuo = float(np.std(residuos)) if len(residuos) > 1 else 0.0
+
+        # Anadir intervalos a las predicciones
+        for p in predicciones:
+            p["ic_inferior"] = round(max(0, p["ingresos_predichos"] - 1.96 * std_residuo), 2)
+            p["ic_superior"] = round(p["ingresos_predichos"] + 1.96 * std_residuo, 2)
+
         return {
             "modelo": "Gradient Boosting",
-            "evaluacion": evaluacion,
+            "evaluacion": {**evaluacion, "naive_mae": round(naive_mae, 2)},
             "predicciones": pd.DataFrame(predicciones),
             "historial": serie[["anio_mes", "ingresos"]],
             "registro": registro,
@@ -161,9 +175,11 @@ class Predictor:
         rows = []
         for idx, det in detalles.items():
             try:
-                sid = int(det.split(":")[0])
-                rows.append({"fecha": df.loc[idx, "fecha"], "servicio_id": sid})
-            except (ValueError, KeyError):
+                partes = det.split(":")
+                sid = int(partes[0])
+                cantidad = int(partes[1]) if len(partes) > 1 else 1
+                rows.append({"fecha": df.loc[idx, "fecha"], "servicio_id": sid, "cantidad": cantidad})
+            except (ValueError, KeyError, IndexError):
                 continue
 
         det_df = pd.DataFrame(rows)
@@ -175,7 +191,7 @@ class Predictor:
 
         # Serie mensual por servicio
         det_df["anio_mes"] = det_df["fecha"].dt.to_period("M").astype(str)
-        serie = det_df.groupby(["servicio", "anio_mes"]).size().reset_index(name="demanda")
+        serie = det_df.groupby(["servicio", "anio_mes"])["cantidad"].sum().reset_index(name="demanda")
 
         # Para cada servicio top 8, hacer regresion simple
         top_servicios = det_df["servicio"].value_counts().head(8).index
@@ -236,7 +252,7 @@ class Predictor:
         rfm["usuario_activo_dias"] = (hoy - rfm["primer_visita"]).dt.days
         rfm["promedio_gasto"] = rfm["monto"] / rfm["frecuencia"].clip(lower=1)
 
-        features = ["recencia", "frecuencia", "monto", "usuario_activo_dias", "promedio_gasto"]
+        features = ["frecuencia", "monto", "usuario_activo_dias", "promedio_gasto"]
         X = rfm[features].values
         y = rfm["churn"].values
 
@@ -247,9 +263,10 @@ class Predictor:
             return {"modelo": "Basado en reglas", "evaluacion": evaluacion,
                     "resultados": rfm, "registro": None}
 
+        # Validacion temporal: shuffle=False. sklearn no permite stratify con
+        # shuffle=False, asi que se omite (la clase mayoritaria domina igual).
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.3, random_state=42,
-            stratify=y if len(np.unique(y)) > 1 else None)
+            X, y, test_size=0.3, random_state=42, shuffle=False)
 
         def _aplicar(m):
             return m.predict_proba(X)[:, 1]
@@ -324,9 +341,7 @@ class Predictor:
         cat_demanda = {}
         peso_por_producto = {}
         if not demanda_cat.empty:
-            cat_demanda = {
-                r["categoria"]: float(r["demanda_mensual"])
-                for _, r in demanda_cat.iterrows()}
+            cat_demanda = demanda_cat.set_index("categoria")["demanda_mensual"].astype(float).to_dict()
             for cat, _demanda in cat_demanda.items():
                 grupo = inv[inv.get("categoria") == cat]
                 if grupo.empty:
@@ -337,47 +352,49 @@ class Predictor:
                     peso_por_producto[str(pid)] = float(w)
 
         hoy = pd.Timestamp.today()
-        resultados = []
 
-        for _, row in inv.iterrows():
-            producto_id = str(row["id"])
-            stock = float(row.get("stock_actual", 0) or 0)
-            stock_min = float(row.get("stock_minimo", 0) or 0)
-            venta = row.get("precio_venta", 0) or 0
-            costo = row.get("precio_costo", 0) or 0
-            categoria = str(row.get("categoria", "") or "")
+        inv["_stock"] = inv["stock_actual"].fillna(0).astype(float)
+        inv["_stock_min"] = inv["stock_minimo"].fillna(0).astype(float)
+        inv["_venta"] = inv["precio_venta"].fillna(0).astype(float)
+        inv["_costo"] = inv["precio_costo"].fillna(0).astype(float)
+        inv["_categoria"] = inv["categoria"].fillna("").astype(str)
+        inv["_id"] = inv["id"].astype(str)
 
-            # Demanda mensual estimada de ESTE producto
-            demanda_mes = 0.0
-            if categoria in cat_demanda:
-                demanda_mes = cat_demanda[categoria] * peso_por_producto.get(producto_id, 0.0)
+        # Demanda mensual estimada de ESTE producto
+        inv["_demanda_mes"] = 0.0
+        for cat, demanda in cat_demanda.items():
+            mask = inv["_categoria"] == cat
+            inv.loc[mask, "_demanda_mes"] = demanda * inv.loc[mask, "_id"].map(peso_por_producto).fillna(0.0)
 
-            stock_objetivo = stock_min + max(0.0, demanda_mes) * lead_time * factor_seguridad
-            meses_cobertura = (stock / demanda_mes) if demanda_mes > 0 else (999 if stock > 0 else 0)
-            falta_stock = stock < stock_objetivo
-            recomendacion = (
-                "Reabastecer" if stock <= stock_min else
-                ("Vigilar" if falta_stock else "Suficiente")
-            )
-            cantidad_recomendada = max(0, int(np.ceil(stock_objetivo - stock)))
+        inv["_stock_objetivo"] = inv["_stock_min"] + inv["_demanda_mes"].clip(lower=0) * lead_time * factor_seguridad
+        inv["_meses_cobertura"] = np.where(
+            inv["_demanda_mes"] > 0,
+            inv["_stock"] / inv["_demanda_mes"],
+            np.where(inv["_stock"] > 0, 999, 0)
+        )
+        inv["_falta_stock"] = inv["_stock"] < inv["_stock_objetivo"]
+        inv["_recomendacion"] = np.where(
+            inv["_stock"] <= inv["_stock_min"],
+            "Reabastecer",
+            np.where(inv["_falta_stock"], "Vigilar", "Suficiente")
+        )
+        inv["_cantidad_recomendada"] = (inv["_stock_objetivo"] - inv["_stock"]).clip(lower=0).apply(np.ceil).astype(int)
 
-            resultados.append({
-                "id": producto_id,
-                "producto": row["producto"],
-                "categoria": str(categoria),
-                "stock_actual": stock,
-                "stock_minimo": stock_min,
-                "demanda_mensual": round(demanda_mes, 2),
-                "tasa_rotacion_mensual": round(demanda_mes, 2),
-                "stock_objetivo": round(stock_objetivo, 1),
-                "meses_cobertura": round(min(meses_cobertura, 999), 1),
-                "cantidad_recomendada": cantidad_recomendada,
-                "recomendacion": recomendacion,
-                "valor_stock": round(stock * costo, 2),
-                "margen_unitario": round(venta - costo, 2),
-            })
-
-        pred = pd.DataFrame(resultados)
+        pred = pd.DataFrame({
+            "id": inv["_id"],
+            "producto": inv["producto"],
+            "categoria": inv["_categoria"],
+            "stock_actual": inv["_stock"],
+            "stock_minimo": inv["_stock_min"],
+            "demanda_mensual": inv["_demanda_mes"].round(2),
+            "tasa_rotacion_mensual": inv["_demanda_mes"].round(2),
+            "stock_objetivo": inv["_stock_objetivo"].round(1),
+            "meses_cobertura": inv["_meses_cobertura"].clip(upper=999).round(1),
+            "cantidad_recomendada": inv["_cantidad_recomendada"],
+            "recomendacion": inv["_recomendacion"],
+            "valor_stock": (inv["_stock"] * inv["_costo"]).round(2),
+            "margen_unitario": (inv["_venta"] - inv["_costo"]).round(2),
+        })
         pred["fecha_recomendada"] = hoy.strftime("%Y-%m-%d")
         orden = {"Reabastecer": 0, "Vigilar": 1, "Suficiente": 2}
         return pred.sort_values(
@@ -394,19 +411,12 @@ class Predictor:
             dias_sin_visita=("fecha", lambda x: (hoy - x.max()).days),
         ).sort_values("dias_sin_visita", ascending=False)
 
-        sugerencias = []
-        for _, row in recencia.head(15).iterrows():
-            if row["dias_sin_visita"] > 120:
-                sugerencias.append({
-                    "cliente": row["nombre"],
-                    "dias_sin_visita": int(row["dias_sin_visita"]),
-                    "sugerencia": "Contacto de reactivacion: ofrecer descuento",
-                })
-            else:
-                sugerencias.append({
-                    "cliente": row["nombre"],
-                    "dias_sin_visita": int(row["dias_sin_visita"]),
-                    "sugerencia": "Recordatorio amable de mantenimiento",
-                })
-
-        return pd.DataFrame(sugerencias)
+        top15 = recencia.head(15).copy()
+        top15["sugerencia"] = np.where(
+            top15["dias_sin_visita"] > 120,
+            "Contacto de reactivacion: ofrecer descuento",
+            "Recordatorio amable de mantenimiento"
+        )
+        return top15[["nombre", "dias_sin_visita", "sugerencia"]].rename(
+            columns={"nombre": "cliente"}
+        ).reset_index(drop=True)

@@ -40,7 +40,7 @@ def principal():
                     etiquetas={"Regla": "Regla", "Alertas": "Alertas"},
                 ), width="stretch", height="stretch")
 
-    st.markdown("### Detalle de alertas")
+    st.markdown("## Detalle de alertas")
     if not alertas:
         st.success("Sin alertas activas en este momento.", icon=":material/verified:")
     for a in alertas:

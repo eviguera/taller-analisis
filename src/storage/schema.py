@@ -180,8 +180,10 @@ VISTAS_ANALITICA: Dict[str, str] = {
            TRY_CAST(split_part(t.det, ':', 3) AS DOUBLE) AS subtotal
     FROM core.facturas f
     LEFT JOIN core.clientes c ON c."id" = f."cliente_id"
-    LEFT JOIN UNNEST(STRING_SPLIT(COALESCE(f."detalles", ''), ';')) AS t(det)
-        ON TRIM(t.det) <> ''
+    LEFT JOIN (
+        SELECT * FROM UNNEST(STRING_SPLIT(COALESCE(f."detalles", ''), ';')) AS t(det)
+        WHERE TRIM(t.det) <> ''
+    ) ON TRUE
     LEFT JOIN core.servicios s
         ON TRY_CAST(split_part(t.det, ':', 1) AS BIGINT) = s."id";
     """,
@@ -232,12 +234,12 @@ VISTAS_ANALITICA: Dict[str, str] = {
     # ------- RFM / churn -----------------------------------------
     "rfm_clientes": """
     CREATE OR REPLACE VIEW analitica.rfm_clientes AS
+    WITH max_fecha AS (
+        SELECT MAX("fecha") AS max_f FROM core.facturas WHERE "estado" <> 'Cancelada'
+    )
     SELECT f."cliente_id",
            c."nombre",
-           CAST(date_diff('day',
-                         MAX(f."fecha"),
-                         (SELECT MAX("fecha") FROM core.facturas WHERE "estado" <> 'Cancelada')
-           ) AS BIGINT)             AS recencia_dias,
+           CAST(date_diff('day', MAX(f."fecha"), (SELECT max_f FROM max_fecha)) AS BIGINT) AS recencia_dias,
            COUNT(*)                 AS frecuencia,
            round(SUM(f."total"), 2) AS monto
     FROM core.facturas f

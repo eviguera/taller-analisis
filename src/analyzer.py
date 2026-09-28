@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from .data_loader import merge_datasets
+from .data_loader import enriquecer_facturas
 
 
 class Analyzer:
@@ -8,7 +8,7 @@ class Analyzer:
 
     def __init__(self, data):
         self.data = data
-        self.df = merge_datasets(data)
+        self.df = enriquecer_facturas(data)
         self.df = self.df[self.df["estado"] != "Cancelada"].copy()
 
     def kpis_globales(self):
@@ -19,7 +19,10 @@ class Analyzer:
             "ticket_promedio": round(facturas["total"].mean(), 2) if len(facturas) else 0,
             "clientes_activos": facturas["cliente_id"].nunique(),
             "vehiculos_atendidos": facturas["vehiculo_id"].nunique(),
-            "servicios_unicos": facturas["detalles"].str.split(";").explode().nunique() if "detalles" in facturas else 0,
+            "servicios_unicos": (
+                facturas["detalles"].str.split(";").explode().str.split(":").str[0].nunique()
+                if "detalles" in facturas else 0
+            ),
             "descuentos_total": round(facturas["descuento"].sum(), 2),
             "valor_cliente_promedio": round(facturas.groupby("cliente_id")["total"].sum().mean(), 2),
         }
@@ -101,7 +104,9 @@ class Analyzer:
             rfm["R"] = pd.qcut(rfm["recencia_dias"], 4, labels=[1, 2, 3, 4]).astype(int)
             rfm["F"] = pd.qcut(rfm["frecuencia"].rank(method="first"), 4, labels=[1, 2, 3, 4]).astype(int)
             rfm["M"] = pd.qcut(rfm["monto"].rank(method="first"), 4, labels=[1, 2, 3, 4]).astype(int)
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger("taller.analyzer").warning("Error en RFM: %s", e)
             rfm["R"] = 1
             rfm["F"] = 1
             rfm["M"] = 1
@@ -162,27 +167,27 @@ class Analyzer:
 
     def detalle_servicios(self):
         nombres = self.data["servicios"].set_index("id")["nombre"].to_dict()
-        rows = []
-        for _, factura in self.df.iterrows():
-            if not isinstance(factura["detalles"], str):
-                continue
-            for det in factura["detalles"].split(";"):
-                try:
-                    sid, cantidad, subtotal = det.split(":")
-                    filas = self.data["servicios"]
-                    precio_unitario = filas.loc[filas["id"] == int(sid), "precio_base"].values[0] if len(filas.loc[filas["id"] == int(sid)]) else 0
-                    rows.append({
-                        "factura_id": factura["id"],
-                        "fecha": factura["fecha"],
-                        "cliente": factura["nombre"],
-                        "servicio_id": int(sid),
-                        "servicio": nombres.get(int(sid), sid),
-                        "cantidad": int(cantidad),
-                        "subtotal": float(subtotal),
-                    })
-                except (ValueError, IndexError):
-                    continue
-        return pd.DataFrame(rows)
+        df = self.df.copy()
+        df = df[df["detalles"].apply(lambda x: isinstance(x, str))].copy()
+        if df.empty:
+            return pd.DataFrame()
+        df["detalle_list"] = df["detalles"].str.split(";")
+        df = df.explode("detalle_list")
+        df = df[df["detalle_list"].str.contains(":", na=False)].copy()
+        if df.empty:
+            return pd.DataFrame()
+        split = df["detalle_list"].str.split(":", expand=True)
+        df["servicio_id"] = pd.to_numeric(split[0], errors="coerce")
+        df["cantidad"] = pd.to_numeric(split[1], errors="coerce")
+        df["subtotal"] = pd.to_numeric(split[2], errors="coerce")
+        df = df.dropna(subset=["servicio_id", "cantidad", "subtotal"])
+        df["servicio_id"] = df["servicio_id"].astype(int)
+        df["servicio"] = df["servicio_id"].map(nombres).fillna(df["servicio_id"].astype(str))
+        precios = self.data["servicios"].set_index("id")["precio_base"].to_dict()
+        df["precio_unitario"] = df["servicio_id"].map(precios).fillna(0)
+        return df[["id", "fecha", "nombre", "servicio_id", "servicio", "precio_unitario", "cantidad", "subtotal"]].rename(
+            columns={"id": "factura_id", "nombre": "cliente"}
+        ).reset_index(drop=True)
 
     def correlaciones(self):
         """Correlaciones entre variables relevantes."""

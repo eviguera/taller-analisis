@@ -116,7 +116,13 @@ class DataStore:
             try:
                 self.ejecutar(ddl_tabla_core(nombre, df, con_claves=con_claves))
                 self._conn.execute(f'INSERT INTO core."{nombre}" SELECT * FROM __tmp_core')
-            except Exception:
+            except Exception as e:
+                import logging
+                logging.getLogger("taller.storage").warning(
+                    "Fallo al crear tabla %s con claves (%s). "
+                    "Reintentando sin PK/FK — puede indicar datos duplicados o huerfanos.",
+                    nombre, e,
+                )
                 con_claves = False
                 self._conn.unregister("__tmp_core")
                 break
@@ -153,7 +159,12 @@ class DataStore:
 
     def consultar_vista(self, nombre: str) -> pd.DataFrame:
         """Consulta una vista del esquema ``analitica``."""
-        return self._conn.execute(f'SELECT * FROM analitica."{self._nombre_valido(nombre)}"').fetchdf()
+        columnas = [r[0] for r in self._conn.execute(
+            f"SELECT column_name FROM information_schema.columns "
+            f"WHERE table_schema='analitica' AND table_name='{self._nombre_valido(nombre)}'"
+        ).fetchall()]
+        cols_str = ", ".join(f'"{c}"' for c in columnas)
+        return self._conn.execute(f'SELECT {cols_str} FROM analitica."{self._nombre_valido(nombre)}"').fetchdf()
 
     def info_estructura(self) -> pd.DataFrame:
         """Catalogo del almacen: esquema, objeto y tipo (tabla/vista)."""
@@ -166,7 +177,15 @@ class DataStore:
         return self._conn.execute(sql).fetchdf()
 
     def tabla(self, nombre: str) -> pd.DataFrame:
-        return self._conn.execute(f'SELECT * FROM "{nombre}"').fetchdf()
+        nombre = self._nombre_valido(nombre)
+        if not self.existe_tabla(nombre):
+            raise ValueError(f"Tabla no existe: {nombre}")
+        columnas = [r[0] for r in self._conn.execute(
+            f"SELECT column_name FROM information_schema.columns "
+            f"WHERE table_name='{nombre}'"
+        ).fetchall()]
+        cols_str = ", ".join(f'"{c}"' for c in columnas)
+        return self._conn.execute(f'SELECT {cols_str} FROM "{nombre}"').fetchdf()
 
     def leer_cache(self, nombre: str) -> Optional[pd.DataFrame]:
         archivo = self.cache_dir / f"{self._nombre_valido(nombre)}.parquet"
@@ -186,8 +205,9 @@ class DataStore:
     def cerrar(self):
         try:
             self._conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger("taller.storage").warning("Error al cerrar conexion DuckDB: %s", e)
 
     def __enter__(self):
         return self

@@ -78,7 +78,9 @@ def _leer_columnas_ligero(ruta: Path, formato: str) -> Optional[List[str]]:
             return list(pd.read_parquet(ruta).columns[:50])
         df = _leer_cabecera(ruta, formato, n=3)
         return list(df.columns)
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("taller.catalog").warning("No se pudo leer cabecera de %s: %s", ruta, e)
         return None
 
 
@@ -86,7 +88,7 @@ def _leer_cabecera(ruta: Path, formato: str, n: int = 3):
     import pandas as pd
     try:
         sep = "\t" if ruta.suffix.lower() == ".tsv" else ","
-        return pd.read_csv(ruta, sep=sep, nrows=n, encoding="utf-8")
+        return pd.read_csv(ruta, sep=sep, nrows=n, encoding="utf-8-sig")
     except UnicodeDecodeError:
         return pd.read_csv(ruta, sep=sep, nrows=n, encoding="latin-1")
 

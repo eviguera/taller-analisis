@@ -116,7 +116,7 @@ def cargar_datos(_cfg):
 
 
 @st.cache_resource(show_spinner="Calculando analisis...")
-def calcular_analista(data):
+def calcular_analista(data, workspace=None):
     return Analyzer(data)
 
 

@@ -61,8 +61,8 @@ def principal():
 
     if not puede_conectores or not puede_sql:
         st.info(
-            "Las pestanas de conectores y consultas SQL son funciones de "
-            "administracion: un administrador puede otorgarte ese acceso.",
+            "Estas funciones son de administracion. "
+            "Pide a un administrador que te otorgue acceso.",
             icon=":material/admin_panel_settings:",
         )
 
@@ -81,6 +81,10 @@ def principal():
                            "CSV, Excel (.xlsx), PSPP (.sav/.zsav/.por).")
 
             directorio = Path(data_dir)
+            permitido = Path(cfg.directorio_datos).resolve()
+            if not directorio.resolve().is_relative_to(permitido):
+                st.error("El directorio debe estar dentro del workspace actual.")
+                return
 
             with st.container(border=True):
                 st.markdown("**Subir archivos**")
@@ -91,7 +95,7 @@ def principal():
                     help="Puedes cargar los archivos que exporta PSPP (.sav, .por) o hojas de calculo.",
                 )
                 if subidos:
-                    destino_dir = cfg.directorio_datos if directorio == Path(cfg.directorio_datos) else directorio
+                    destino_dir = Path(cfg.directorio_datos)
                     destino_dir.mkdir(parents=True, exist_ok=True)
                     guardados = 0
                     for up in subidos:
@@ -294,7 +298,7 @@ def principal():
     # ---------------------------------------------------------------
     with tab_pspp:
         if tab_pspp.open:
-            st.markdown("### Integracion con PSPP / SPSS")
+            st.markdown("## Integracion con PSPP / SPSS")
             st.markdown("""
 El sistema trabaja con **CSV + PSPP a la vez**: si en `data/` hay un archivo
 `.sav`/`.por` para un dataset, el ETL puede usarlo en lugar del CSV (o como
@@ -516,7 +520,7 @@ de la pestana *Procesar (ETL)*.
                             st.dataframe(pd.DataFrame(publicados), width="stretch")
                         except Exception as e:  # noqa: BLE001
                             wh_estado.update(label="Fallo la publicacion", state="error")
-                            st.error(f"{type(e).__name__}: {e}")
+                            st.error(f"No se pudo publicar: {e}")
             with wh_c2:
                 if st.button("Ver tablas publicadas", icon=":material/database_search:",
                              disabled=not wh_dsn.strip()):
@@ -527,20 +531,20 @@ de la pestana *Procesar (ETL)*.
                         else:
                             st.dataframe(df_wh, width="stretch")
                     except Exception as e:  # noqa: BLE001
-                        st.error(f"{type(e).__name__}: {e}")
+                        st.error(f"No se pudo ver las tablas: {e}")
 
     # ---------------------------------------------------------------
     #  PESTAÑA: CONSULTAS SQL
     # ---------------------------------------------------------------
     with _pestana(tab_sql):
         if tab_sql is not None and tab_sql.open:
-            st.markdown("### Consultas SQL sobre tus datos (DuckDB)")
+            st.markdown("## Consultas SQL sobre tus datos (DuckDB)")
             st.caption("Consulta todas las tablas en lenguaje SQL. "
                        "Util para informacion avanzada y portatil.")
             st.info(
-                "Modo **solo lectura**: se acepta una sentencia `SELECT` por vez. "
-                "Las escrituras y el acceso a archivos o a la red quedan "
-                "bloqueados para no alterar el almacen.",
+                "Modo **solo lectura**: ejecuta una sentencia `SELECT` por vez. "
+                "Las escrituras y el acceso a archivos o a la red estan "
+                "bloqueados para proteger el almacen.",
                 icon=":material/read_only:",
             )
             st.selectbox(
@@ -560,7 +564,74 @@ de la pestana *Procesar (ETL)*.
                     df_res = consulta_sql(consulta)
                     st.dataframe(df_res, width="stretch", height=300)
                 except Exception as e:  # noqa: BLE001
-                    st.error(f"No se pudo ejecutar: {e}")
+                    st.error(f"No se pudo ejecutar la consulta. Verifica la sintaxis SQL: {e}")
+
+
+def _wizard_primer_uso():
+    """Wizard de primer uso: guia al usuario para cargar datos por primera vez.
+
+    Solo se muestra si no hay datos cargados y el usuario no lo ha completado.
+    """
+    cfg = obtener_config()
+    data = obtener_estado()[1]
+    hay_datos = bool(data) and any(
+        isinstance(df, pd.DataFrame) and not df.empty for df in data.values()
+    )
+
+    if hay_datos or st.session_state.get("_onboarding_completado"):
+        return
+
+    with st.container(border=True):
+        st.markdown("### :material/rocket_launch: Comenzando con GIRO")
+        st.markdown(
+            "Bienvenido. Para ver analisis y predicciones, primero cargamos "
+            "los datos de tu negocio."
+        )
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("**1. Sube tus archivos**")
+            st.markdown("CSV, Excel o PSPP con tus facturas, clientes y servicios.")
+        with col2:
+            st.markdown("**2. Procesa el ETL**")
+            st.markdown("GIRO normaliza los datos y crea las vistas analíticas.")
+        with col3:
+            st.markdown("**3. Explora el dashboard**")
+            st.markdown("KPIs, predicciones y recomendaciones listos para usar.")
+
+        st.markdown("---")
+        st.markdown(
+            "Ve a la pagina **Datos y configuracion** para comenzar, o "
+            "genera datos de ejemplo para probar."
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Ir a Datos y configuración", type="primary",
+                         icon=":material/arrow_forward:", width="stretch",
+                         key="wizard_ir_datos"):
+                st.session_state["_onboarding_completado"] = True
+                st.switch_page("ui/pages/datos.py")
+        with c2:
+            if st.button("Generar datos de ejemplo",
+                         icon=":material/auto_awesome:", width="stretch",
+                         key="wizard_generar_ejemplo"):
+                from generate_data import main as generar
+                import sys
+                from io import StringIO
+
+                # Capturar el output para no ensuciar la consola
+                old_argv = sys.argv
+                sys.argv = ["generate_data", "--workspace", cfg.clave]
+                try:
+                    generar()
+                    st.session_state["_onboarding_completado"] = True
+                    st.success("Datos de ejemplo generados. Recarga la pagina.")
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"No se pudo generar datos de ejemplo: {e}")
+                finally:
+                    sys.argv = old_argv
 
 
 if __name__ == "__main__":

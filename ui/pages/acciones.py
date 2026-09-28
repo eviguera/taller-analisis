@@ -54,11 +54,13 @@ def principal():
                             "recencia_dias": st.column_config.NumberColumn("Recencia (dias)"),
                         },
                     )
-                for _, r in acciones.head(6).iterrows():
-                    color = "rojo" if r["accion"] == "Reactivar" else \
-                            ("amarillo" if r["accion"] == "Recordatorio preventivo" else "azul")
-                    etiqueta = f"{r['accion']} → {r['nombre']}"
-                    st.markdown(f"- {c.badge(etiqueta, color)} — {r['canal']}: _{r['mensaje']}_")
+                top6 = acciones.head(6)
+                colores = np.where(top6["accion"] == "Reactivar", "rojo",
+                          np.where(top6["accion"] == "Recordatorio preventivo", "amarillo", "azul"))
+                etiquetas = top6["accion"] + " → " + top6["nombre"]
+                lineas = [f"- {c.badge(et, col)} — {canal}: _{msj}_"
+                          for et, col, canal, msj in zip(etiquetas, colores, top6["canal"], top6["mensaje"])]
+                st.markdown("\n".join(lineas))
                 c.descargar(acciones, "next_best_action")
 
     with tab_mant:
