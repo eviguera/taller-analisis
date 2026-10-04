@@ -69,7 +69,9 @@ def exportar_sav(df: pd.DataFrame, ruta: Path, etiquetas_columnas: Optional[dict
     df_limpio.columns = [str(c).replace(" ", "_").replace(".", "_") for c in df_limpio.columns]
     for c in df_limpio.columns:
         if df_limpio[c].dtype == "object":
-            df_limpio[c] = df_limpio[c].astype(str)
+            # Los nulos deben viajar como missing de SPSS, no como el
+            # literal "nan"/"None" (que PSPP leeria como texto valido).
+            df_limpio[c] = df_limpio[c].where(df_limpio[c].notna(), None)
     pyreadstat.write_sav(
         df_limpio,
         str(ruta),

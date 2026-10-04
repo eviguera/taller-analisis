@@ -93,7 +93,9 @@ def main():
         st.stop()
 
     # El kiosco es la vista de venta: sin configuracion, sin escribir nada.
-    if kiosco and not sesion.puede(auth.PERMISO_GESTIONAR_EMPRESAS):
+    # El rol no importa: el banner promete solo lectura, y eso vale para
+    # admin tambien.
+    if kiosco:
         _sidebar_kiosco()
         _navegar(cfg_head, kiosco=True)
         return
@@ -102,11 +104,24 @@ def main():
     _navegar(cfg_head, kiosco=False)
 
 
+def _paginas_por_rol(sesion, kiosco: bool):
+    """Paginas visibles segun el rol.
+
+    ``negocio`` (unidad economica interna) y ``datos`` (ETL, conectores, SQL,
+    warehouse) son de administracion: un usuario ``cliente`` no debe verlas.
+    """
+    if sesion.puede(auth.PERMISO_GESTIONAR_EMPRESAS):
+        return PAGINAS
+    ocultan = {"negocio", "datos"}
+    return [p for p in PAGINAS if p[1] not in ocultan]
+
+
 def _navegar(cfg_head, kiosco: bool):
     """Barra de navegacion + pagina activa + pie."""
+    paginas_visibles = _paginas_por_rol(context.sesion(), kiosco)
     paginas = [
         st.Page(modulo, title=etiqueta, icon=icono, url_path=clave, default=principal)
-        for etiqueta, clave, icono, modulo, principal in PAGINAS
+        for etiqueta, clave, icono, modulo, principal in paginas_visibles
     ]
     tema_mod.aplicar(cfg_head.tema)
 

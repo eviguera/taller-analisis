@@ -13,6 +13,7 @@ FORMATO_POR_EXT = {
     ".sav": "sav",
     ".zsav": "zsav",
     ".por": "por",
+    ".parquet": "parquet",
 }
 
 
@@ -30,7 +31,11 @@ def get_loader(ruta: Path, formato: Optional[str] = None, fallback: Optional[Bas
         return _instanciar(FORMATO_POR_EXT[ext])
 
     if fallback is not None:
-        return _instanciar(fallback.formato) or fallback
+        try:
+            return _instanciar(fallback.formato)
+        except ValueError:
+            # El formato del fallback tampoco existe como cargador.
+            return fallback
 
     raise ValueError(f"Formato no soportado para: {ruta}")
 

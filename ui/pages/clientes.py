@@ -53,11 +53,11 @@ def principal():
             col1, col2 = st.columns([1, 1.4], vertical_alignment="center")
             with col1:
                 with c.panel("Distribucion de segmentos", "Concentracion por perfil"):
-                    st.plotly_chart(c.grafico_pastel(conteo, "Segmento", "Cantidad"),
+                    c.mostrar_grafico(c.grafico_pastel(conteo, "Segmento", "Cantidad"),
                                     width="stretch", height="stretch")
             with col2:
                 with c.panel("Mapa RFM", "Frecuencia vs gasto por cliente"):
-                    st.plotly_chart(c.grafico_dispersion(
+                    c.mostrar_grafico(c.grafico_dispersion(
                         rfm, "frecuencia", "monto", color="segmento", hover=["nombre"], log_y=True,
                     ), width="stretch", height="stretch")
 
@@ -66,7 +66,7 @@ def principal():
                 rfm[["nombre", "recencia_dias", "frecuencia", "monto", "rfm_score", "segmento"]],
                 width="stretch", height=320,
                 column_config={
-                    "monto": st.column_config.NumberColumn("Monto", format="$#,##0"),
+                    "monto": st.column_config.NumberColumn("Monto", format=c.formato_moneda(cfg.moneda)),
                     "recencia_dias": st.column_config.NumberColumn("Recencia (dias)"),
                 },
             )
@@ -88,14 +88,14 @@ def principal():
             top = analyzer.clientes_top(n=15)
             with c.panel("Top 15 por gasto", "Clientes de mayor valor economico",
                          icono=":material/leaderboard:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     top, "nombre", "total_gastado", color="facturas", color_cont="Blues",
                     etiquetas={"nombre": "Cliente", "total_gastado": "Gasto total"},
                 ), width="stretch", height="stretch")
             st.dataframe(
                 top, width="stretch", height=320,
                 column_config={
-                    "total_gastado": st.column_config.NumberColumn("Gasto total", format="$#,##0"),
+                    "total_gastado": st.column_config.NumberColumn("Gasto total", format=c.formato_moneda(cfg.moneda)),
                     "facturas": st.column_config.NumberColumn("Facturas"),
                 },
             )
@@ -105,7 +105,7 @@ def principal():
             frec = analyzer.frecuencia_visitas_clientes()
             with c.panel("Clientes por numero de visitas", "Frecuencia de regreso",
                          icono=":material/repeat:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     frec.head(15), "nombre", "facturas", color_cont="Purples",
                     etiquetas={"nombre": "Cliente", "facturas": "Visitas"},
                 ), width="stretch", height="stretch")

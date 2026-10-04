@@ -17,8 +17,6 @@ import os
 
 import streamlit as st
 
-from src import workspaces
-from src.negocio import unidad_economica
 from ui.theme import DEFAULT_TEMA
 
 
@@ -89,46 +87,6 @@ def main() -> None:
     """, unsafe_allow_html=True)
 
     # ----------------------------------------------------------------------
-    # METRICAS DE LA PLATAFORMA
-    # ----------------------------------------------------------------------
-    # Las cifras se derivan de `suscripcion:` en config/config.yaml, no se escriben
-    # a mano. Antes estaban fijas en el HTML y se contradician entre si: se
-    # anunciaba "Costo por empresa $3.000/mes" junto a "COGS por tenant = $0", y
-    # un MRR de $8,3M que no correspondia al break-even calculado. Con una sola
-    # fuente, las tres tarjetas no pueden volver a desincronizarse.
-    def _metricas_plataforma() -> dict:
-        try:
-            ue = unidad_economica(workspaces.cargar_config())
-        except Exception:
-            return {}
-        precio = ue.get("precio_ponderado") or 0
-        be = ue.get("breakeven_clientes") or 0
-        return {
-            "costo": ue.get("costo_tenant") or 0,
-            "margen": (ue.get("margen_bruto") or 0) * 100,
-            "breakeven": be,
-            "mrr_breakeven": precio * be,
-        }
-
-
-    _M = _metricas_plataforma()
-
-
-    def _clp(valor: float) -> str:
-        """Formatea un monto en pesos Chilean sin decimales: $330.000."""
-        return f"${valor:,.0f}".replace(",", ".")
-
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Costo por empresa", _clp(_M["costo"]) if _M else "s/d",
-              "infra DuckDB/parquet + open source")
-    m2.metric("Margen bruto", f"{_M['margen']:.1f}%" if _M else "s/d",
-              f"COGS por tenant {_clp(_M['costo']) if _M else 's/d'}")
-    m3.metric("Break-even", f"~{_M['breakeven']} clientes" if _M else "s/d",
-              f"≈ {_clp(_M['mrr_breakeven'])} MRR" if _M else "")
-    m4.metric("Módulos de valor", "9", "analisis, ML, alertas y PSPP")
-
-    # ----------------------------------------------------------------------
     # MODULOS
     # ----------------------------------------------------------------------
     st.markdown('<div class="section-title">Una plataforma, todo el ciclo</div>'
@@ -197,20 +155,6 @@ def main() -> None:
             st.markdown(f"""<div class="{cls}"><h3>{nombre}</h3>
             <div class="sub">{sub}</div><div class="monto">{precio}</div><ul>{lis}</ul></div>""",
                         unsafe_allow_html=True)
-
-    # ----------------------------------------------------------------------
-    # PARA INVERSIONISTAS (unidad economica en vivo)
-    # ----------------------------------------------------------------------
-    st.markdown('<div class="section-title">Unidad economica (para inversionistas)</div>'
-                '<div class="sub">Lo que cuesta servir cada empresa y lo que escala la plataforma.</div>',
-                unsafe_allow_html=True)
-    ei1, ei2, ei3, ei4 = st.columns(4)
-    ei1.metric("MRR @ 25 clientes", "$8,25M", "mix Core/Pro 40/60")
-    ei2.metric("MRR @ 50 clientes", "$16,5M", "neto $9,35M/ms")
-    ei3.metric("COGS por tenant", "$3.000/mes", "DuckDB + parquet + open source")
-    ei4.metric("Margen bruto", ">99%", "sin coste de licencias")
-    st.caption("Detalle calculado con datos reales en la pagina **Negocio** del dashboard (retention, "
-               "ARPU, valor recuperable y ROI de la suscripcion). Pitch en `docs/pitch.md`.")
 
     # ----------------------------------------------------------------------
     # CTA FINAL

@@ -34,6 +34,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
@@ -42,6 +43,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import yaml
+
+log = logging.getLogger("taller.auth")
 
 from ..workspaces import CLAVE_PRINCIPAL, PATRON_CLAVE, listar_workspaces, validar_clave
 
@@ -342,8 +345,10 @@ def guardar_registro(usuarios: Dict[str, Usuario]) -> None:
                                    default_flow_style=False), encoding="utf-8")
     try:
         ruta.chmod(0o600)
-    except OSError:
-        pass
+    except OSError as e:
+        # El registro de usuarios debe quedar legible solo por su duenio:
+        # si el chmod falla, que se vea en el log, no en silencio.
+        log.warning("No se pudo restringir permisos de %s: %s", ruta, e)
 
 
 def buscar_usuario(username: str) -> Optional[Usuario]:
@@ -416,8 +421,11 @@ def autenticar(username: str, password: str) -> Tuple[Optional[Usuario], Optiona
         usuario.hash = hashear(password)
         try:
             guardar_registro(cargar_registro())
-        except OSError:
-            pass
+        except OSError as e:
+            # El hash viejo quedara sin migrar en disco: no es fatal para la
+            # sesion actual, pero hay que dejar constancia.
+            log.warning("No se pudo persistir la migracion del hash de %s: %s",
+                        usuario.username, e)
     return usuario, None
 
 
@@ -525,8 +533,11 @@ def inicio_de_sesion(token: Optional[str], modo_kiosco: bool = False) -> Sesion:
         if st.user.is_logged_in:
             claims = {"email": st.user.email or "", "nombre": st.user.name or ""}
             return _sesion_por_claims(claims)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        # Si la federacion falla, se cae al registro local: un fallo silencioso
+        # aqui dejaria al usuario sin saber por que su SSO no entra.
+        log.warning("Identidad federada no disponible (%s); se usa el registro local",
+                    type(e).__name__)
 
     # 2) Kiosco: visitante de solo lectura, nunca con permisos de escritura.
     if modo_kiosco:

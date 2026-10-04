@@ -17,12 +17,26 @@ fi
 limpiar() {
     trap - TERM INT
     kill "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
-    timeout 10 wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || {
-        kill -KILL "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
-        wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
-    }
+    # `wait` es builtin de bash: `timeout 10 wait` nunca funciono (timeout solo
+    # ejecuta comandos externos). Se espera con un loop acotado de kill -0.
+    local i=0
+    while [ "${i}" -lt 10 ] && { kill -0 "${PID_DASH}" 2>/dev/null \
+            || kill -0 "${PID_LANDING}" 2>/dev/null; }; do
+        sleep 1
+        i=$((i + 1))
+    done
+    kill -KILL "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
+    wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
 }
 trap limpiar TERM INT
+
+# La app exige GIRO_AUTH_SECRET en produccion (0.0.0.0). Sin el, cada
+# `docker compose up` genera uno nuevo y cierra todas las sesiones.
+if [ -z "${GIRO_AUTH_SECRET:-}" ]; then
+    echo "[giro] AVISO: GIRO_AUTH_SECRET no esta definido." >&2
+    echo "[giro]        Se generara uno efimero: las sesiones se pierden" >&2
+    echo "[giro]        en cada reinicio. Fijalo: openssl rand -hex 32" >&2
+fi
 
 echo "[giro] arrancando dashboard en :${GIRO_DASH_PORT} y landing en :${GIRO_LANDING_PORT}"
 

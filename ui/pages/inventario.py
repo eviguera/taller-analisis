@@ -46,11 +46,11 @@ def principal():
     )
 
     columnas_dinero = {
-        "valor_inventario": st.column_config.NumberColumn("Valor", format="$#,##0"),
-        "valor_stock": st.column_config.NumberColumn("Valor stock", format="$#,##0"),
-        "margen_unitario": st.column_config.NumberColumn("Margen unit.", format="$#,##0"),
-        "precio_costo": st.column_config.NumberColumn("Costo", format="$#,##0"),
-        "precio_venta": st.column_config.NumberColumn("Venta", format="$#,##0"),
+        "valor_inventario": st.column_config.NumberColumn("Valor", format=c.formato_moneda(cfg.moneda)),
+        "valor_stock": st.column_config.NumberColumn("Valor stock", format=c.formato_moneda(cfg.moneda)),
+        "margen_unitario": st.column_config.NumberColumn("Margen unit.", format=c.formato_moneda(cfg.moneda)),
+        "precio_costo": st.column_config.NumberColumn("Costo", format=c.formato_moneda(cfg.moneda)),
+        "precio_venta": st.column_config.NumberColumn("Venta", format=c.formato_moneda(cfg.moneda)),
         "margen_pct": st.column_config.NumberColumn("Margen %", format="%.0f%%"),
     }
 
@@ -61,7 +61,7 @@ def principal():
             col1, col2 = st.columns(2, vertical_alignment="center")
             with col1:
                 with c.panel("Estado del stock", "Salud general del inventario"):
-                    st.plotly_chart(c.grafico_pastel(estado, "Estado", "Cantidad"),
+                    c.mostrar_grafico(c.grafico_pastel(estado, "Estado", "Cantidad"),
                                     width="stretch", height="stretch")
             with col2:
                 with c.panel("Desglose por categoria", "Stock y valor por familia de producto"):
@@ -71,7 +71,7 @@ def principal():
                         valor=("valor_inventario", "sum"),
                     ).sort_values("valor", ascending=False).reset_index()
                     st.dataframe(cat, width="stretch", column_config={
-                        "valor": st.column_config.NumberColumn("Valor", format="$#,##0"),
+                        "valor": st.column_config.NumberColumn("Valor", format=c.formato_moneda(cfg.moneda)),
                     })
 
     with tab_stock:
@@ -79,7 +79,7 @@ def principal():
             orden = inv.sort_values("stock_actual", ascending=False)
             with c.panel("Stock actual por producto", "Unidades disponibles por articulo",
                          icono=":material/warehouse:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     orden, "producto", "stock_actual", color="estado_stock",
                     etiquetas={"producto": "Producto", "stock_actual": "Unidades"},
                 ), width="stretch", height="stretch")
@@ -89,7 +89,7 @@ def principal():
             orden_repo = pred_inv.sort_values("meses_cobertura", ascending=True)
             with c.panel("Meses de cobertura", "Menor cobertura = mayor urgencia",
                          icono=":material/update:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     orden_repo, "producto", "meses_cobertura", color="recomendacion",
                     etiquetas={"producto": "Producto", "meses_cobertura": "Meses"},
                 ), width="stretch", height="stretch")
@@ -115,7 +115,7 @@ def principal():
             marg = inv.sort_values("margen_pct", ascending=False)
             with c.panel("Margen por producto (%)", "Rentabilidad unitaria",
                          icono=":material/percent:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     marg, "producto", "margen_pct", color_cont="Tealgrn",
                     etiquetas={"producto": "Producto", "margen_pct": "Margen %"},
                 ), width="stretch", height="stretch")

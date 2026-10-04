@@ -34,13 +34,16 @@ services:
       - giro_data:/app/data
       - giro_workspaces:/app/workspaces
       - giro_reportes:/app/reports
-      - ./usuarios.yaml:/app/config/usuarios.yaml   # registro de usuarios
+      # Ruta real del registro de usuarios (la de config/, que es donde la
+      # busca auth.py). Montar la raiz crearia un directorio que tapa el
+      # archivo y rompe el login.
+      - ./config/usuarios.yaml:/app/config/usuarios.yaml
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (8501, 8502)]"]
+             "import os, urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (os.environ.get('GIRO_DASH_PORT','8501'), os.environ.get('GIRO_LANDING_PORT','8502'))]"]
       interval: 30s
       timeout: 5s
-      start_period: 30s
+      start_period: 90s
       retries: 3
 
 volumes:

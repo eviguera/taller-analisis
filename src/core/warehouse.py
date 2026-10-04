@@ -18,6 +18,7 @@ colisiones con tablas propias de la organizacion.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -38,11 +39,39 @@ def _engine(dsn: str):
     return create_engine(dsn)
 
 
-def _nombre_tabla(prefijo: str, objeto: str) -> str:
-    """Sanitiza un nombre de objeto DuckDB a un identificador SQL lowercase."""
-    import re
+_IDENTIFICADOR = re.compile(r"[a-z0-9_]+")
+
+
+def _identificador(objeto: str) -> str:
+    """Valida un identificador SQL contra allowlist; lanza si no es valido.
+
+    Los nombres viajan interpolados en DDL/DML (`DROP TABLE IF EXISTS "x"`),
+    asi que no basta con sanitizar: si sobra algo raro, se rechaza.
+    """
     limpio = re.sub(r"\W+", "_", str(objeto)).strip("_").lower()
-    return f"{prefijo or ''}{limpio}"
+    if not limpio or not _IDENTIFICADOR.fullmatch(limpio):
+        raise ValueError(f"Identificador SQL no valido: {objeto!r}")
+    return limpio
+
+
+def _prefijo_efectivo(cfg: AppConfig, prefijo: str) -> str:
+    """Prefijo con el workspace incluido: aislamiento por tenant.
+
+    Dos workspaces publicando en el mismo warehouse con el mismo prefijo se
+    pisarian (``to_sql(if_exists="replace")`` borra lo del otro). El nombre de
+    tabla siempre lleva la clave del workspace salvo que el prefijo ya la
+    incluya.
+    """
+    clave = _identificador(cfg.clave)
+    base = prefijo or ""
+    if clave in base:
+        return base
+    return f"{base}{clave}_"
+
+
+def _nombre_tabla(prefijo: str, objeto: str) -> str:
+    """Prefijo + nombre de objeto validado como identificador SQL lowercase."""
+    return f"{prefijo or ''}{_identificador(objeto)}"
 
 
 def _tabla_publica(prefijo: str, esquema: str, objeto: str) -> str:
@@ -73,6 +102,7 @@ def sincronizar(cfg: AppConfig, dsn: str,
 
     store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cfg.usar_cache)
     engine = _engine(dsn)
+    prefijo = _prefijo_efectivo(cfg, prefijo)
     publicados: List[Dict] = []
     try:
         info = store.info_estructura()
@@ -83,7 +113,9 @@ def sincronizar(cfg: AppConfig, dsn: str,
             objetos = info.loc[info["esquema"] == esquema, "objeto"].tolist()
             for objeto in objetos:
                 try:
-                    df = store.consulta(f'SELECT * FROM "{esquema}"."{objeto}"')  # noqa: store.consulta ya usa columnas explicitas
+                    # identificador validado contra allowlist antes de interpolar
+                    ident = _identificador(objeto)
+                    df = store.consulta(f'SELECT * FROM "{esquema}"."{ident}"')
                 except Exception as e:  # noqa: BLE001
                     log.warning("No se pudo leer %s.%s: %s", esquema, objeto, e)
                     continue
@@ -125,6 +157,9 @@ def _publicar_datasets(engine, cfg, prefijo: str, publicados: List[Dict]) -> Non
 
 def _escribir(engine, tabla: str, df: pd.DataFrame) -> None:
     from sqlalchemy import text
+    # la tabla llega de _tabla_publica (objeto validado) pero el prefijo
+    # puede venir del CLI: se revalida el identificador completo.
+    tabla = _identificador(tabla)
     if df is None or df.empty:
         with engine.begin() as conn:
             conn.execute(text(f'DROP TABLE IF EXISTS "{tabla}"'))
@@ -136,10 +171,16 @@ def ver(cfg: AppConfig, dsn: str, prefijo: str = "giro_") -> pd.DataFrame:
     """Lista los objetos GIRO ya publicados en el warehouse destino."""
     from sqlalchemy import inspect, text
     engine = _engine(dsn)
+    prefijo = _prefijo_efectivo(cfg, prefijo)
     insp = inspect(engine)
     filas = []
     for tabla in insp.get_table_names():
         if prefijo and not tabla.startswith(prefijo):
+            continue
+        try:
+            tabla_valida = _identificador(tabla)
+        except ValueError:
+            log.warning("Tabla con nombre fuera de allowlist, se omite: %r", tabla)
             continue
         nb = insp.get_table_options(tabla)
         if isinstance(nb, dict) and nb.get("mysql_table_type") == "VIEW":
@@ -147,7 +188,7 @@ def ver(cfg: AppConfig, dsn: str, prefijo: str = "giro_") -> pd.DataFrame:
             continue
         try:
             with engine.connect() as conn:
-                n = conn.execute(text(f'SELECT COUNT(*) FROM "{tabla}"')).scalar()
+                n = conn.execute(text(f'SELECT COUNT(*) FROM "{tabla_valida}"')).scalar()
             filas.append({"tabla": tabla, "tipo": "tabla", "filas": n})
         except Exception as e:  # noqa: BLE001
             log.warning("No se pudo contar %s: %s", tabla, e)

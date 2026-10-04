@@ -1,5 +1,6 @@
 """Pagina: Acciones (Giro Recomienda: next best action + mantenimiento predictivo + modelos)."""
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -48,8 +49,8 @@ def principal():
                         width="stretch", height=420,
                         column_config={
                             "prob_churn": st.column_config.ProgressColumn(
-                                "Riesgo", format="%.0f%%", min_value=0, max_value=1),
-                            "monto": st.column_config.NumberColumn("Monto", format="$#,##0"),
+                                "Riesgo", format="percent", min_value=0, max_value=1),
+                            "monto": st.column_config.NumberColumn("Monto", format=c.formato_moneda(cfg.moneda)),
                             "prioridad": st.column_config.NumberColumn("Prioridad", format="%.2f"),
                             "recencia_dias": st.column_config.NumberColumn("Recencia (dias)"),
                         },

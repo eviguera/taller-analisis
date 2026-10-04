@@ -32,9 +32,11 @@ class ModelRegistry:
         import joblib
 
         meta = dict(metadatos or {})
+        import sklearn
         meta.update({
             "tipo": tipo,
             "fecha_entrenamiento": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sklearn_version": sklearn.__version__,
         })
         joblib.dump(modelo, self._ruta_modelo(tipo))
         self._ruta_meta(tipo).write_text(
@@ -42,18 +44,46 @@ class ModelRegistry:
         return meta
 
     def cargar(self, tipo: str) -> tuple[Any, Optional[dict]]:
-        """Devuelve ``(modelo, metadatos)`` o ``(None, None)`` si no existe."""
+        """Devuelve ``(modelo, metadatos)`` o ``(None, None)`` si no existe.
+
+        Un ``joblib`` es deserializacion arbitraria: el archivo debe vivir
+        dentro del directorio del registry (no se aceptan rutas externas) y
+        cualquier fallo se registra en vez de tragarse, para que un modelo
+        corrupto no parezca un "reentrena solo" fantasma.
+        """
+        import logging
+
         import joblib
 
-        modelo_path = self._ruta_modelo(tipo)
+        modelo_path = self._ruta_modelo(tipo).resolve()
         meta_path = self._ruta_meta(tipo)
+        log = logging.getLogger("taller.registry")
         if not modelo_path.exists():
             return None, None
+        if self.directorio.resolve() not in modelo_path.parents:
+            log.warning("Modelo %s fuera del registry; se ignora", modelo_path)
+            return None, None
+        meta = None
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning("Metadatos ilegibles para %s: %s", tipo, e)
+        version_sklearn = (meta or {}).get("sklearn_version")
+        if version_sklearn:
+            import sklearn
+            if version_sklearn != sklearn.__version__:
+                # sklearn no garantiza compatibilidad entre versiones al
+                # deserializar; se descarta y se reentrena.
+                log.warning("Modelo %s entrenado con sklearn %s (actual %s); "
+                            "se reentrenara", tipo, version_sklearn, sklearn.__version__)
+                return None, None
         try:
             modelo = joblib.load(modelo_path)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            log.warning("No se pudo cargar el modelo %s (%s): %s; se reentrenara",
+                        tipo, modelo_path.name, type(e).__name__)
             return None, None
-        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else None
         return modelo, meta
 
     def borrar(self, tipo: str) -> None:
@@ -77,7 +107,12 @@ class ModelRegistry:
 
     def es_fresco(self, tipo: str, n_minimo: int = 0) -> bool:
         """True si el modelo existe y fue entrenado con al menos `n_minimo` muestras."""
-        _, meta = self.cargar(tipo)
-        if not meta:
+        # Lee solo el JSON: no deserializa el modelo completo solo para esto.
+        meta_path = self._ruta_meta(tipo)
+        if not meta_path.exists() or not self._ruta_modelo(tipo).exists():
+            return False
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
             return False
         return (meta.get("n_muestras") or 0) >= n_minimo

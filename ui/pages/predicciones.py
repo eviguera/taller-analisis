@@ -54,18 +54,18 @@ def principal():
                 if not hist.empty and not pred.empty:
                     fig.add_vline(x=len(hist) - 0.5, line_dash="dash",
                                   line_color="gray", annotation_text="Prediccion")
-                st.plotly_chart(fig, width="stretch", height="stretch")
+                c.mostrar_grafico(fig)
 
             col1, col2 = st.columns(2, vertical_alignment="center")
             with col1:
                 with c.panel("Proyeccion", "Ingresos estimados a futuro"):
                     st.dataframe(res["predicciones"], width="stretch", column_config={
-                        "ingresos_predichos": st.column_config.NumberColumn("Ingresos", format="$#,##0"),
+                        "ingresos_predichos": st.column_config.NumberColumn("Ingresos", format=c.formato_moneda(cfg.moneda)),
                     })
             with col2:
                 with c.panel("Historico (ultimos 12)", "Ingresos observados recientes"):
                     st.dataframe(hist.tail(12), width="stretch", column_config={
-                        "Valor": st.column_config.NumberColumn("Ingresos", format="$#,##0"),
+                        "Valor": st.column_config.NumberColumn("Ingresos", format=c.formato_moneda(cfg.moneda)),
                     })
 
     with tab_dem:
@@ -80,7 +80,7 @@ def principal():
                 pred_df = dem["predicciones"]
                 with c.panel("Proyeccion de demanda", "Demanda estimada por servicio y mes",
                              icono=":material/query_stats:"):
-                    st.plotly_chart(c.grafico_linea(
+                    c.mostrar_grafico(c.grafico_linea(
                         pred_df, "fecha", "demanda_predicha", color="servicio",
                         etiquetas={"fecha": "Mes", "demanda_predicha": "Demanda estimada"},
                     ), width="stretch", height="stretch")
@@ -118,7 +118,7 @@ def principal():
                 top = resultados.sort_values("prob_churn", ascending=False).head(15)
                 with c.panel("Mayor probabilidad de churn", "Ranking de clientes en riesgo",
                              icono=":material/person_off:"):
-                    st.plotly_chart(c.grafico_barras(
+                    c.mostrar_grafico(c.grafico_barras(
                         top, "nombre", "prob_churn", color="churn", color_cont="RdYlGn_r",
                         etiquetas={"nombre": "Cliente", "prob_churn": "Probabilidad"},
                     ), width="stretch", height="stretch")
@@ -127,9 +127,9 @@ def principal():
                     resultados[["nombre", "recencia", "frecuencia", "monto", "churn", "prob_churn"]],
                     width="stretch", height=340,
                     column_config={
-                        "prob_churn": st.column_config.ProgressColumn("Prob. churn", format="%.0f%%",
+                        "prob_churn": st.column_config.ProgressColumn("Prob. churn", format="percent",
                                                                       min_value=0, max_value=1),
-                        "monto": st.column_config.NumberColumn("Monto", format="$#,##0"),
+                        "monto": st.column_config.NumberColumn("Monto", format=c.formato_moneda(cfg.moneda)),
                     },
                 )
             else:
@@ -150,8 +150,8 @@ def principal():
                     "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
                     "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
                     "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
-                    "valor_stock": st.column_config.NumberColumn("Valor stock", format="$#,##0"),
-                    "margen_unitario": st.column_config.NumberColumn("Margen unit.", format="$#,##0"),
+                    "valor_stock": st.column_config.NumberColumn("Valor stock", format=c.formato_moneda(cfg.moneda)),
+                    "margen_unitario": st.column_config.NumberColumn("Margen unit.", format=c.formato_moneda(cfg.moneda)),
                 },
             )
 

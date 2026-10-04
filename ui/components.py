@@ -62,6 +62,16 @@ def moneda(valor, moneda="MXN"):
     return f"{s}{miles(valor)}"
 
 
+def formato_moneda(moneda="CLP"):
+    """Formato de columna numerica para `column_config` con la moneda del cfg.
+
+    Centraliza el simbolo: las tablas no deben hardcodear ``$`` si el
+    workspace esta en EUR.
+    """
+    simbolos = {"MXN": "$", "USD": "$", "EUR": "€", "CLP": "$", "COP": "$"}
+    return f"{simbolos.get(moneda, '$')}#,##0"
+
+
 def _es_oscuro() -> bool:
     try:
         return st.context.theme.type == "dark"
@@ -162,11 +172,27 @@ def confirmacion_exito(msg, detalle=None):
     st.success(texto, icon=":material/check_circle:")
 
 
-def vacio_con_cta(mensaje, cta, icono=":material/info:"):
-    """Estado vacio con CTA prominente (boton) para guiar al usuario."""
+def vacio_con_cta(mensaje, cta, icono=":material/info:", on_click=None,
+                  clave=None, cta_secundario=None, on_click_secundario=None):
+    """Estado vacio con CTA prominente (boton) para guiar al usuario.
+
+    El boton **ejecuta** ``on_click`` (sin callback seria un boton que no
+    hace nada, el peor estado vacio posible). ``cta_secundario`` permite una
+    salida de emergencia (\"lo haré después\").
+    """
     with st.container(border=True):
         st.markdown(f"**{icono} {mensaje}**")
-        st.button(cta, type="primary", use_container_width=True)
+        col1, col2 = st.columns([2, 1] if cta_secundario else [1])
+        with col1:
+            if st.button(cta, type="primary", use_container_width=True,
+                         key=clave, on_click=on_click):
+                st.rerun()
+        if cta_secundario:
+            with col2:
+                if st.button(cta_secundario, use_container_width=True,
+                             key=f"{clave}_sec" if clave else None,
+                             on_click=on_click_secundario):
+                    st.rerun()
 
 
 # ------------------------------------------------------------------
@@ -174,12 +200,13 @@ def vacio_con_cta(mensaje, cta, icono=":material/info:"):
 # ------------------------------------------------------------------
 
 def formato_archivo(fmt):
-    """Chip de color para mostrar el formato de un archivo en una tabla."""
-    color = {
-        "csv": "#2563eb", "excel": "#059669", "sav": "#7c3aed",
-        "zsav": "#7c3aed", "por": "#0ea5e9", "parquet": "#64748b",
-    }.get(fmt, "#64748b")
-    return f'<span style="background:{color};color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">{fmt.upper()}</span>'
+    """Etiqueta de formato para una celda de tabla (texto plano).
+
+    El texto de una celda de ``st.dataframe`` se muestra literal: ahi no
+    entra HTML ni markdown, asi que un chip <span> se veria como codigo.
+    Para badges con color usar :func:`badge` en el flujo markdown.
+    """
+    return str(fmt or "?").upper()
 
 
 def badge(texto, tipo="info"):
@@ -262,6 +289,20 @@ def _layout(fig, titulo="", leyenda=True):
     fig.update_xaxes(gridcolor=grid, zeroline=False)
     fig.update_yaxes(gridcolor=grid, zeroline=False)
     return fig
+
+
+def mostrar_grafico(fig, clave=None, **kwargs):
+    """Renderiza una figura Plotly ya construida (wrapper de st.plotly_chart).
+
+    Las paginas no deben llamar a ``st.plotly_chart`` directamente: aqui se
+    centraliza el layout comun (stretch, config) y el dia que cambia la
+    libreria se toca un solo lugar. ``kwargs`` admite ``width``/``height``
+    para los casos que necesitan una altura fija.
+    """
+    kwargs.setdefault("width", "stretch")
+    kwargs.setdefault("height", "stretch")
+    kwargs.setdefault("config", {"displaylogo": False})
+    st.plotly_chart(fig, key=clave, **kwargs)
 
 
 def grafico_linea(df, x, y, titulo="", color=None, etiquetas=None):

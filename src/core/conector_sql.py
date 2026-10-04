@@ -24,8 +24,10 @@ Flujo de demo:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +42,47 @@ log = logging.getLogger("taller.conectores")
 
 MOTORES_LOCALES = ("sqlite", "duckdb", "csv", "excel")
 MOTORES_SQL_EXTERNOS = ("postgres", "mysql", "sql")
+
+# Lista restrictiva de sentencias de lectura. No es un parser: ante la duda
+# se rechaza. Sin esto, un conector podria ejecutar DROP/ATTACH/COPY contra
+# la replica del ERP.
+_SOLO_LECTURA = re.compile(
+    r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)*(select|with|explain|describe|show)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+_PELIGROSO = re.compile(
+    r"\b(?:copy|attach|detach|install|load|export|import|pragma|delete|"
+    r"insert|update|drop|create|alter|truncate|vacuum|checkpoint|set|"
+    r"attach|pragma)\b"
+    r"|;|read_csv|read_parquet|read_json|glob\(",
+    re.IGNORECASE,
+)
+
+
+def validar_solo_lectura(consulta: str) -> None:
+    """Deja pasar una unica sentencia de lectura; si no, lanza ValueError."""
+    texto = (consulta or "").strip()
+    if not texto:
+        raise ValueError("Un conector requiere una consulta SQL")
+    if not _SOLO_LECTURA.match(texto):
+        raise ValueError("Los conectores solo permiten consultas de lectura "
+                         "(SELECT, WITH, EXPLAIN, DESCRIBE, SHOW)")
+    if ";" in texto.rstrip(";"):
+        raise ValueError("Los conectores admiten una sola sentencia por vez.")
+    if _PELIGROSO.search(texto.rstrip(";").rstrip()):
+        raise ValueError("La consulta contiene operaciones no permitidas en "
+                         "modo lectura (escrituras, ATTACH o lectura de archivos).")
+
+
+def _mensaje_error(e: Exception) -> str:
+    """Mensaje de error seguro para UI y logs: nunca incluye el DSN.
+
+    Las excepciones de SQLAlchemy/psycopg2 pueden traer credenciales en el
+    DSN (`postgres://user:pass@...`); aqui solo queda el tipo y el texto.
+    """
+    texto = str(e)
+    texto = re.sub(r"(\w+://)[^@\s]+@", r"\1***@", texto)
+    return f"{type(e).__name__}: {texto}"
 
 
 def _dsn_resuelto(cfg: AppConfig, conector: Conector) -> str:
@@ -74,9 +117,7 @@ def _conectar_sqlalchemy(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         raise ValueError("Un conector SQL requiere una consulta SQL")
     engine = create_engine(dsn, connect_args={"connect_timeout": 10})
     try:
-        consulta = conector.consulta.strip().upper()
-        if not consulta.startswith("SELECT"):
-            raise ValueError("Los conectores SQL solo permiten consultas SELECT (solo lectura)")
+        validar_solo_lectura(conector.consulta)
         with engine.connect() as conn:
             return pd.read_sql_query(conector.consulta, conn)
     finally:
@@ -133,18 +174,21 @@ def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         ruta = _resolver_fuente(cfg, conector)
         if not ruta.exists():
             raise FileNotFoundError(f"No existe la BD sqlite: {ruta}")
-        if not conector.consulta:
-            raise ValueError("Un conector sqlite requiere una consulta SQL")
-        with sqlite3.connect(str(ruta)) as conn:
+        validar_solo_lectura(conector.consulta)
+        # mode=ro: aunque la consulta pasara la validacion, el archivo de la
+        # replica del ERP queda fisicamente en solo lectura.
+        conn = sqlite3.connect(f"file:{ruta.resolve()}?mode=ro", uri=True, timeout=10)
+        try:
             return pd.read_sql_query(conector.consulta, conn)
+        finally:
+            conn.close()
     if motor == "duckdb":
         import duckdb
         ruta = _resolver_fuente(cfg, conector)
         if not ruta.exists():
             raise FileNotFoundError(f"No existe la BD duckdb: {ruta}")
-        if not conector.consulta:
-            raise ValueError("Un conector duckdb requiere una consulta SQL")
-        conn = duckdb.connect(str(ruta))
+        validar_solo_lectura(conector.consulta)
+        conn = duckdb.connect(str(ruta), read_only=True)
         try:
             return conn.execute(conector.consulta).fetchdf()
         finally:
@@ -209,8 +253,8 @@ def ejecutar_conectores(cfg: AppConfig, ya_cargados: Optional[set] = None):
             if not df.empty:
                 datos[c.dataset] = _string_a_detalle(df, c.dataset)
         except Exception as e:  # noqa: BLE001
-            log.warning("Conector %s fallo: %s", c.nombre, e)
-            errores[c.nombre] = f"{type(e).__name__}: {e}"
+            log.warning("Conector %s fallo: %s", c.nombre, _mensaje_error(e))
+            errores[c.nombre] = _mensaje_error(e)
     return datos, errores
 
 
@@ -276,12 +320,17 @@ def crear_snapshot_erp(cfg: AppConfig, destino: Optional[Path] = None,
                                         or str(c.fuente or "").startswith("http"))
         for c in parsear_conectores(cfg))
 
-    with sqlite3.connect(str(destino)) as conn:
+    with contextlib.closing(sqlite3.connect(str(destino))) as conn, conn:
         conteos = {}
         for nombre, df in datos.items():
             if df is None or df.empty or not nombre:
                 continue
-            nombre_tabla = str(nombre).replace(" ", "_").lower()
+            # identificador del ERP: mismo criterio estricto que el store
+            nombre_tabla = re.sub(r"\W+", "_", str(nombre)).strip("_").lower()
+            if not re.fullmatch(r"[a-z_][a-z0-9_]*", nombre_tabla or ""):
+                log.warning("Dataset %r con nombre no valido para SQLite; se omite",
+                            nombre)
+                continue
             df.to_sql(nombre_tabla, conn, if_exists="replace", index=False)
             conteos[nombre] = int(len(df))
 
@@ -304,16 +353,26 @@ def conectores_desde_snapshot(cfg: AppConfig, ruta: Path) -> List[dict]:
     ruta = Path(ruta)
     if not ruta.exists():
         raise FileNotFoundError(f"No existe el snapshot: {ruta}")
-    with sqlite3.connect(str(ruta)) as conn:
+    conn = sqlite3.connect(f"file:{ruta.resolve()}?mode=ro", uri=True)
+    try:
         tablas = [
             r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' "
                 "AND name <> 'giro_metadatos' ORDER BY name").fetchall()
         ]
+    finally:
+        conn.close()
     try:
         relativa = ruta.relative_to(cfg.directorio_datos)
     except ValueError:
         relativa = ruta
+    # Solo tablas con nombre de identificador normal: el nombre viaja al
+    # SQL del conector y al nombre del dataset.
+    seguras = [t for t in tablas
+               if re.fullmatch(r"[a-z_][a-z0-9_]*", str(t).lower())]
+    if len(seguras) != len(tablas):
+        log.warning("Se ignoran %d tabla(s) de nombre no estandar en el snapshot",
+                    len(tablas) - len(seguras))
     return [
         {
             "nombre": f"erp_{t}",
@@ -323,7 +382,7 @@ def conectores_desde_snapshot(cfg: AppConfig, ruta: Path) -> List[dict]:
             "dataset": t,
             "forzar": True,
         }
-        for t in tablas
+        for t in seguras
     ]
 
 

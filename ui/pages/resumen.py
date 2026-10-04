@@ -48,7 +48,7 @@ def principal():
         c.vacio(
             "Sin datos de facturas para el resumen.",
             icono=":material/receipt_long:",
-            detalle="Importa tus facturas en la pagina 'Datos y configuracion' y procesa el ETL.",
+            detalle="Importa tus facturas en la pagina 'Mis datos' y procesa el ETL.",
         )
         return
 
@@ -119,14 +119,14 @@ def principal():
     with col1:
         with c.panel("Ingresos por mes", "Series mensuales de facturacion",
                      icono=":material/show_chart:"):
-            st.plotly_chart(c.grafico_linea(
+            c.mostrar_grafico(c.grafico_linea(
                 serie, "anio_mes", "ingresos",
                 etiquetas={"anio_mes": "Mes", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
     with col2:
         with c.panel("Facturas por mes", "Volumen mensual de ordenes",
                      icono=":material/bar_chart:"):
-            st.plotly_chart(c.grafico_barras(
+            c.mostrar_grafico(c.grafico_barras(
                 serie, "anio_mes", "facturas", color_cont="Blues",
                 etiquetas={"anio_mes": "Mes", "facturas": "Facturas"}),
                 width="stretch", height="stretch")
@@ -139,7 +139,7 @@ def principal():
                      icono=":material/directions_car:"):
             por_marca = filtrado.groupby("marca").agg(
                 ingresos=("total", "sum")).sort_values("ingresos", ascending=False).reset_index()
-            st.plotly_chart(c.grafico_barras(
+            c.mostrar_grafico(c.grafico_barras(
                 por_marca, "marca", "ingresos",
                 etiquetas={"marca": "Marca", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
@@ -148,7 +148,7 @@ def principal():
                      icono=":material/calendar_month:"):
             mes_df = est["por_mes"].copy()
             mes_df["mes_nombre"] = mes_df["mes"].map(lambda m: c.MESES_ES[int(m) - 1])
-            st.plotly_chart(c.grafico_barras(
+            c.mostrar_grafico(c.grafico_barras(
                 mes_df, "mes_nombre", "ingresos",
                 etiquetas={"mes_nombre": "Mes", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
@@ -159,7 +159,7 @@ def principal():
                      icono=":material/calendar_view_week:"):
             dia_df = est["por_dia_semana"].copy()
             dia_df["dia"] = dia_df["dia_semana"].map(c.DIAS_ES).fillna(dia_df["dia_semana"])
-            st.plotly_chart(c.grafico_barras(
+            c.mostrar_grafico(c.grafico_barras(
                 dia_df, "dia", "ingresos", color_cont="Reds",
                 etiquetas={"dia": "Dia", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
@@ -168,7 +168,7 @@ def principal():
                      icono=":material/check_circle:"):
             estado_df = filtrado["estado"].value_counts().reset_index()
             estado_df.columns = ["Estado", "Cantidad"]
-            st.plotly_chart(c.grafico_pastel(estado_df, "Estado", "Cantidad"),
+            c.mostrar_grafico(c.grafico_pastel(estado_df, "Estado", "Cantidad"),
                             width="stretch", height="stretch")
 
     # ----- Vista previa de datos crudos -----

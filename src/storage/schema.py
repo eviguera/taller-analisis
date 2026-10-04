@@ -63,6 +63,17 @@ ESPECIFICACIONES: Dict[str, Dict] = {
 #  Tipos: pandas -> DuckDB
 # ------------------------------------------------------------------
 
+def _ident(col: str) -> str:
+    """Lleva un nombre de columna a un identificador SQL entre comillas.
+
+    Los nombres de columna vienen de los encabezados de los archivos que
+    sube el usuario: sin escapar, un ``"`` rompe el DDL (o lo inyecta). Se
+    duplica la comilla, que es la escapada estandar de SQL; asi se
+    conservan acentos y espacios.
+    """
+    return '"' + str(col).replace('"', '""') + '"'
+
+
 def sql_tipo(dtype: str) -> str:
     """Convierte un dtype de pandas a un tipo SQL de DuckDB."""
     if pd.api.types.is_integer_dtype(dtype):
@@ -85,15 +96,15 @@ def ddl_tabla_core(nombre: str, df: pd.DataFrame, con_claves: bool = True) -> st
     spec = ESPECIFICACIONES.get(nombre, {"pk": [], "fks": []})
     columnas = []
     for col in df.columns:
-        columnas.append(f'"{col}" {sql_tipo(df[col].dtype)}')
+        columnas.append(f'{_ident(col)} {sql_tipo(df[col].dtype)}')
     if con_claves:
         for pk in spec.get("pk", []):
             if pk in df.columns:
-                columnas.append(f'PRIMARY KEY ("{pk}")')
+                columnas.append(f'PRIMARY KEY ({_ident(pk)})')
         for col, ref in spec.get("fks", []):
             if col in df.columns:
-                columnas.append(f'FOREIGN KEY ("{col}") REFERENCES {ref}')
-    return f'CREATE TABLE IF NOT EXISTS core."{nombre}" (\n  ' + ",\n  ".join(columnas) + "\n);"
+                columnas.append(f'FOREIGN KEY ({_ident(col)}) REFERENCES {ref}')
+    return f'CREATE TABLE IF NOT EXISTS core.{_ident(nombre)} (\n  ' + ",\n  ".join(columnas) + "\n);"
 
 
 # ------------------------------------------------------------------
@@ -180,10 +191,8 @@ VISTAS_ANALITICA: Dict[str, str] = {
            TRY_CAST(split_part(t.det, ':', 3) AS DOUBLE) AS subtotal
     FROM core.facturas f
     LEFT JOIN core.clientes c ON c."id" = f."cliente_id"
-    LEFT JOIN (
-        SELECT * FROM UNNEST(STRING_SPLIT(COALESCE(f."detalles", ''), ';')) AS t(det)
-        WHERE TRIM(t.det) <> ''
-    ) ON TRUE
+    LEFT JOIN UNNEST(STRING_SPLIT(COALESCE(f."detalles", ''), ';')) AS t(det)
+        ON TRIM(t.det) <> ''
     LEFT JOIN core.servicios s
         ON TRY_CAST(split_part(t.det, ':', 1) AS BIGINT) = s."id";
     """,

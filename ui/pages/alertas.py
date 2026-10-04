@@ -35,7 +35,7 @@ def principal():
         col1, col2 = st.columns([1, 2], vertical_alignment="center")
         with col1:
             with c.panel("Alertas por regla", "Que se esta disparando"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     tipo_df, "Regla", "Alertas", color_cont="Reds",
                     etiquetas={"Regla": "Regla", "Alertas": "Alertas"},
                 ), width="stretch", height="stretch")

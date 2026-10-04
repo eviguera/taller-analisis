@@ -12,7 +12,7 @@ from src.loaders import get_loader
 from src.loaders.pspp_loader import exportar_sav
 
 from ui import components as c
-from ui.context import obtener_config, obtener_estado, sesion
+from ui.context import cargar_datos, obtener_config, obtener_estado, sesion
 
 EJEMPLOS_SQL = {
     "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
@@ -35,7 +35,7 @@ def _pestana(tab):
 def principal():
     cfg, data, analyzer, predictor = obtener_estado()
     c.cabecera(
-        "Datos y configuracion",
+        "Mis datos",
         "Importa tus datos (CSV, Excel o PSPP), verifica calidad y procesa el ETL",
         icono=":material/database:",
     )
@@ -571,9 +571,12 @@ def _wizard_primer_uso():
     """Wizard de primer uso: guia al usuario para cargar datos por primera vez.
 
     Solo se muestra si no hay datos cargados y el usuario no lo ha completado.
+    No pasa por ``obtener_estado``: ese camino entrena los modelos y puede
+    detener la renderizacion con un error tecnico; aqui basta saber si hay
+    datos.
     """
     cfg = obtener_config()
-    data = obtener_estado()[1]
+    data = cargar_datos(cfg)
     hay_datos = bool(data) and any(
         isinstance(df, pd.DataFrame) and not df.empty for df in data.values()
     )
@@ -601,37 +604,42 @@ def _wizard_primer_uso():
 
         st.markdown("---")
         st.markdown(
-            "Ve a la pagina **Datos y configuracion** para comenzar, o "
+            "Ve a la pagina **Mis datos** para comenzar, o "
             "genera datos de ejemplo para probar."
         )
 
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("Ir a Datos y configuración", type="primary",
+        col1, col2, col3 = st.columns([1, 1, 0.8])
+        with col1:
+            if st.button("Ir a Mis datos", type="primary",
                          icon=":material/arrow_forward:", width="stretch",
                          key="wizard_ir_datos"):
-                st.session_state["_onboarding_completado"] = True
+                # No se marca completado aqui: si el usuario se pierde sin
+                # importar nada, el wizard debe volver a aparecer.
                 st.switch_page("ui/pages/datos.py")
-        with c2:
+        with col2:
             if st.button("Generar datos de ejemplo",
                          icon=":material/auto_awesome:", width="stretch",
                          key="wizard_generar_ejemplo"):
                 from generate_data import main as generar
                 import sys
-                from io import StringIO
 
                 # Capturar el output para no ensuciar la consola
                 old_argv = sys.argv
                 sys.argv = ["generate_data", "--workspace", cfg.clave]
                 try:
                     generar()
-                    st.session_state["_onboarding_completado"] = True
                     st.success("Datos de ejemplo generados. Recarga la pagina.")
                     st.rerun()
                 except Exception as e:  # noqa: BLE001
                     st.error(f"No se pudo generar datos de ejemplo: {e}")
                 finally:
                     sys.argv = old_argv
+        with col3:
+            if st.button("Lo haré después",
+                         icon=":material/later:", width="stretch",
+                         key="wizard_despues"):
+                st.session_state["_onboarding_completado"] = True
+                st.rerun()
 
 
 if __name__ == "__main__":

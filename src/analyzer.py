@@ -99,17 +99,25 @@ class Analyzer:
             monto=("total", "sum"),
         ).reset_index()
 
-        # Cuantiles para calificar
+        # Cuantiles para calificar. La recencia va al reves de F y M: pocos
+        # dias sin comprar es lo bueno, asi que el cuantil mas bajo de
+        # recencia_dias recibe la mejor calificacion (4). El rank garantiza
+        # cuantiles distintos aunque haya empates.
         try:
-            rfm["R"] = pd.qcut(rfm["recencia_dias"], 4, labels=[1, 2, 3, 4]).astype(int)
-            rfm["F"] = pd.qcut(rfm["frecuencia"].rank(method="first"), 4, labels=[1, 2, 3, 4]).astype(int)
-            rfm["M"] = pd.qcut(rfm["monto"].rank(method="first"), 4, labels=[1, 2, 3, 4]).astype(int)
+            rfm["R"] = pd.qcut(rfm["recencia_dias"].rank(method="first"), 4,
+                               labels=[4, 3, 2, 1], duplicates="drop").astype(int)
+            rfm["F"] = pd.qcut(rfm["frecuencia"].rank(method="first"), 4,
+                               labels=[1, 2, 3, 4], duplicates="drop").astype(int)
+            rfm["M"] = pd.qcut(rfm["monto"].rank(method="first"), 4,
+                               labels=[1, 2, 3, 4], duplicates="drop").astype(int)
         except Exception as e:
             import logging
             logging.getLogger("taller.analyzer").warning("Error en RFM: %s", e)
-            rfm["R"] = 1
-            rfm["F"] = 1
-            rfm["M"] = 1
+            # Sin cuantiles no hay senal: se marca como no calificado en vez
+            # de inventar un 3 constante que pareceria "promedio real".
+            rfm["R"] = 0
+            rfm["F"] = 0
+            rfm["M"] = 0
 
         rfm["rfm_score"] = rfm["R"].astype(int) + rfm["F"].astype(int) + rfm["M"].astype(int)
 

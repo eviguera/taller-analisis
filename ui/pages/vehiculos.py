@@ -55,7 +55,7 @@ def principal():
             if not por_marca.empty:
                 with c.panel("Ingresos por marca", "Facturacion, facturas y promedio por marca",
                              icono=":material/savings:"):
-                    st.plotly_chart(c.grafico_barras(
+                    c.mostrar_grafico(c.grafico_barras(
                         por_marca, "marca", "ingresos", color="facturas", color_cont="Greens",
                         etiquetas={"marca": "Marca", "ingresos": "Ingresos"},
                     ), width="stretch", height="stretch")
@@ -64,7 +64,7 @@ def principal():
             col1, col2 = st.columns(2, vertical_alignment="center")
             with col1:
                 with c.panel("Vehiculos por marca", "Concentracion de la flota"):
-                    st.plotly_chart(c.grafico_pastel(conteo.head(8), "Marca", "Vehiculos"),
+                    c.mostrar_grafico(c.grafico_pastel(conteo.head(8), "Marca", "Vehiculos"),
                                     width="stretch", height="stretch")
             with col2:
                 with c.panel("Conteo por marca", "Ranking de marcas"):
@@ -96,7 +96,7 @@ def principal():
 
                 with c.panel("Top 15 vehiculos por ingreso", "Los que mas facturan",
                              icono=":material/savings:"):
-                    st.plotly_chart(c.grafico_barras(
+                    c.mostrar_grafico(c.grafico_barras(
                         ing.head(15), "vehiculo_id", "ingresos", color="facturas",
                         color_cont="Blues",
                         etiquetas={"vehiculo_id": "ID vehiculo", "ingresos": "Ingresos"},
@@ -106,7 +106,7 @@ def principal():
                 st.dataframe(
                     ing, width="stretch", height=380,
                     column_config={
-                        "ingresos": st.column_config.NumberColumn("Ingresos", format="$#,##0"),
+                        "ingresos": st.column_config.NumberColumn("Ingresos", format=c.formato_moneda(cfg.moneda)),
                         "facturas": st.column_config.NumberColumn("Visitas"),
                         "anio": st.column_config.NumberColumn("Anio"),
                         "kilometraje": st.column_config.NumberColumn("Kilometraje", format="%d km"),
@@ -124,7 +124,7 @@ def principal():
             conteo_edad.columns = ["Rango de Edad", "Cantidad"]
             with c.panel("Distribucion por antiguedad", "Edad de la flota atendida",
                          icono=":material/calendar_month:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     conteo_edad, "Rango de Edad", "Cantidad", color_cont="Brwnyl",
                     etiquetas={"Cantidad": "Vehiculos"},
                 ), width="stretch", height="stretch")
@@ -134,7 +134,7 @@ def principal():
         if tab_km.open:
             with c.panel("Distribucion de kilometraje", "Recorrido acumulado de la flota",
                          icono=":material/speed:"):
-                st.plotly_chart(c.grafico_hist(vehiculos, "kilometraje", 25,
+                c.mostrar_grafico(c.grafico_hist(vehiculos, "kilometraje", 25,
                                                xlabel="Kilometraje (km)"),
                                 width="stretch", height="stretch")
             st.caption(f"**Km promedio:** {c.miles(km_prom)} km · **Km maximo:** "

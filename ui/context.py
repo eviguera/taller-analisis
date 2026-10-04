@@ -116,27 +116,28 @@ def cargar_datos(_cfg):
 
 
 @st.cache_resource(show_spinner="Calculando analisis...")
-def calcular_analista(data, workspace=None):
+def calcular_analista(data, workspace: str):
     return Analyzer(data)
 
 
 @st.cache_resource(show_spinner="Entrenando modelos de prediccion...")
-def calcular_predictor(data, cfg):
+def calcular_predictor(data, cfg, workspace: str):
     return Predictor(data, cfg=cfg)
 
 
 def obtener_estado():
     """Devuelve (cfg, data, analyzer, predictor) listos para renderizar una pagina."""
     cfg = obtener_config()
+    ws = obtener_workspace()
     try:
         data = cargar_datos(cfg)
         if len(data) < 3:
             st.warning("Se cargaron pocos datasets. Revisa la pagina de Datos para importar tus archivos.")
-        analyzer = calcular_analista(data)
-        predictor = calcular_predictor(data, cfg)
+        analyzer = calcular_analista(data, ws)
+        predictor = calcular_predictor(data, cfg, ws)
     except Exception as e:  # noqa: BLE001
         st.error(f"No se pudieron cargar los datos:\n\n`{e}`")
-        st.info("Ve a la pagina **'Datos y configuracion'** despues de importar tus archivos.")
+        st.info("Ve a la pagina **'Mis datos'** despues de importar tus archivos.")
         st.stop()
     return cfg, data, analyzer, predictor
 

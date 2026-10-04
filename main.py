@@ -21,7 +21,6 @@ Uso:
 """
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -99,13 +98,28 @@ def cmd_etl(args):
     print("\nOK" if resultado.ok else "\nCOMPLETADO CON ERRORES")
 
 
+def _abrir_en_navegador(ruta) -> None:
+    """Abre un HTML en el navegador local (solo macOS) sin shell.
+
+    Lista de argumentos: una ruta con comillas no puede convertirse en
+    comando. En otros SO se indica que el archivo se abra a mano.
+    """
+    if sys.platform != "darwin":
+        print(f"Abre el archivo en tu navegador: {ruta}")
+        return
+    try:
+        subprocess.run(["open", str(ruta)], check=False, timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"No se pudo abrir el navegador: {type(e).__name__}: {e}")
+
+
 def cmd_report(args):
     data, cfg = cmd_resumen(args)
     print("\n\nGenerando reporte HTML...")
     ruta, contenido = ReportGenerator(data, cfg=cfg).generar(args.output)
     print(f"Reporte generado en: {ruta}")
     if args.abrir:
-        os.system(f"open '{ruta}'")
+        _abrir_en_navegador(ruta)
 
 
 def cmd_predict(args):
@@ -390,7 +404,7 @@ def cmd_reporte(args):
         else:
             print("  Email no enviado (SMTP no configurado).")
     if args.abrir:
-        os.system(f"open '{ruta}'")
+        _abrir_en_navegador(ruta)
 
 
 def cmd_workspace(args):
@@ -424,6 +438,12 @@ def cmd_workspace(args):
             raise SystemExit(1)
 
 
+def _dsn_seguro(dsn: str) -> str:
+    """DSN apto para logs/consola: nunca muestra usuario ni password."""
+    import re as _re
+    return _re.sub(r"(\w+://)[^@/\s]+@", r"\1***@", str(dsn))
+
+
 def cmd_warehouse(args):
     """Publica el almacen DuckDB hacia un warehouse SQL externo (multi-DB)."""
     from src.core.warehouse import sincronizar, ver
@@ -432,7 +452,7 @@ def cmd_warehouse(args):
     if args.accion == "sync":
         esquemas = tuple(e.strip() for e in (args.esquemas or "datasets,core,analitica").split(","))
         publicados = sincronizar(cfg, args.dsn, esquemas=esquemas, prefijo=args.prefijo)
-        print(f"Publicados {len(publicados)} objetos al warehouse ({args.dsn}):")
+        print(f"Publicados {len(publicados)} objetos al warehouse ({_dsn_seguro(args.dsn)}):")
         print(f"  {'esquema':<10} {'origen':<24} {'tabla':<30} {'filas':>8}")
         for p in publicados:
             print(f"  {p['esquema']:<10} {p['origen']:<24} {p['tabla']:<30} {p['filas']:>8}")

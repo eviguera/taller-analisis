@@ -163,11 +163,11 @@ def principal():
             fig = c.grafico_linea(
                 serie_graf, "fecha", "ingresos", color="tipo",
                 etiquetas={"fecha": "Mes", "ingresos": "Ingresos", "tipo": "Serie"})
-            st.plotly_chart(fig, width="stretch", height="stretch")
+            c.mostrar_grafico(fig)
     with col2:
         with c.panel("EBITDA mensual del escenario", "Ingresos - costos variables - gastos fijos",
                      icono=":material/trending_up:"):
-            st.plotly_chart(c.grafico_barras(
+            c.mostrar_grafico(c.grafico_barras(
                 proy, "fecha", "ebitda",
                 color_cont="Greens",
                 etiquetas={"fecha": "Mes", "ebitda": "EBITDA"}),
@@ -184,7 +184,7 @@ def principal():
                 with c.panel("Comparacion con el modelo predictivo",
                              "Escenario bajo parametros vs modelo entrenado con tu historial",
                              icono=":material/compare_arrows:"):
-                    st.plotly_chart(c.grafico_linea(
+                    c.mostrar_grafico(c.grafico_linea(
                         serie_ml, "fecha", "ingresos", color="tipo",
                         etiquetas={"fecha": "Mes", "ingresos": "Ingresos", "tipo": "Serie"}),
                         width="stretch", height="stretch")

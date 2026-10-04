@@ -59,7 +59,8 @@ def _componente_html(ruta_html: str, alto: int = 780):
 
 
 def _boton_descarga(ruta_html: str):
-    import os
+    import platform
+    import subprocess
     ruta = Path(ruta_html)
     contenido = ruta.read_bytes()
     c1, c2 = st.columns(2)
@@ -69,12 +70,21 @@ def _boton_descarga(ruta_html: str):
             mime="text/html", icon=":material/download:", width="stretch",
         )
     with c2:
-        if st.button("Abrir en el navegador", icon=":material/open_in_new:",
-                     width="stretch", key="rpt_abrir"):
-            try:
-                os.system(f"open '{ruta}'")
-            except Exception:  # noqa: BLE001
-                pass
+        # `open` solo existe en macOS; el boton se oculta en servidor o en
+        # Linux donde seria un no-op silencioso. Lista sin shell: la ruta
+        # nunca se interpreta como comando.
+        if platform.system() == "Darwin":
+            if st.button("Abrir en el navegador", icon=":material/open_in_new:",
+                         width="stretch", key="rpt_abrir"):
+                try:
+                    subprocess.run(["open", str(ruta)], check=False,
+                                   capture_output=True, timeout=10)
+                    st.toast("Reporte abierto en el navegador.")
+                except Exception as e:  # noqa: BLE001
+                    c.mensaje_error("No se pudo abrir el reporte.",
+                                    detalle=f"{type(e).__name__}: {e}")
+        else:
+            st.caption("Descarga el HTML y ábrelo en tu navegador.")
 
 
 def principal():
@@ -91,7 +101,7 @@ def principal():
         c.vacio(
             "Faltan datasets para generar reportes.",
             icono=":material/database_off:",
-            detalle="Importa tus datos en 'Datos y configuracion' antes de generar.",
+            detalle="Importa tus datos en 'Mis datos' antes de generar.",
         )
         return
 

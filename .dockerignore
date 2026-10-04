@@ -8,14 +8,15 @@ __pycache__
 .DS_Store
 
 # --- Secretos: nunca dentro de la imagen ---
-.env
-.env.*
+.env*
 *.pem
 *.key
 .streamlit/secrets.toml
 .streamlit/.credentials
 config/usuarios.yaml
 config/usuarios.yml
+usuarios.yaml
+usuarios.yml
 .giro_auth_secret
 **/.giro_auth_secret
 *secret*
@@ -38,6 +39,9 @@ reports
 *.csv
 *.xlsx
 *.xls
+*.por
+*.zsav
+*.tsv
 
 # --- Modelos entrenados (se regeneran; pueden pesar cientos de MB) ---
 *.joblib

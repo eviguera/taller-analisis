@@ -54,16 +54,36 @@ def _normalizar_columnas(df: pd.DataFrame, mapeo: Dict[str, str]) -> pd.DataFram
 
 
 def _limpiar(df: pd.DataFrame, tipo: str) -> pd.DataFrame:
-    """Limpieza basica general: columnas vacias, duplicados y tipos basicos."""
+    """Limpieza basica general: columnas vacias, duplicados y tipos basicos.
+
+    Un total no parseable **no** se convierte en 0 en silencio: se deja en
+    NaN y el recuento queda en ``df.attrs["coerciones"]`` para que el llamador
+    lo reporte como advertencia del ETL.
+    """
     df = df.copy()
     df = df.loc[:, ~df.columns.duplicated()]
+    coerciones: Dict[str, int] = dict(df.attrs.get("coerciones") or {})
 
     if tipo == "facturas" or tipo == "ventas":
         if "fecha" in df.columns:
+            antes = df["fecha"].isna().sum()
             df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+            malas = int(df["fecha"].isna().sum() - antes)
+            if malas:
+                coerciones["fecha"] = coerciones.get("fecha", 0) + malas
         for col in ("total", "descuento"):
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+                crudo = pd.to_numeric(df[col], errors="coerce")
+                # Solo cuenta los que venian con valor y no parseaban.
+                malos = int((df[col].notna() & crudo.isna()).sum())
+                if malos:
+                    coerciones[col] = coerciones.get(col, 0) + malos
+                df[col] = crudo
+        if coerciones.get("total"):
+            # Un total ilegible no es 0: se excluye del agregado para no
+            # falsear ingresos; la advertencia avisa al usuario.
+            log.warning("facturas: %d total(es) no parseables; quedan en blanco",
+                        coerciones["total"])
 
     if tipo == "clientes" and "fecha_registro" in df.columns:
         df["fecha_registro"] = pd.to_datetime(df["fecha_registro"], errors="coerce")
@@ -72,6 +92,7 @@ def _limpiar(df: pd.DataFrame, tipo: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    df.attrs["coerciones"] = coerciones
     return df
 
 
@@ -103,6 +124,12 @@ def _cargar_archivos_locales(cfg: AppConfig, directorio: Path,
                 resultado.advertencias[nombre] = (
                     f"columnas faltantes: {', '.join(sorted(faltantes))}"
                 )
+            coerciones = df.attrs.get("coerciones") or {}
+            if coerciones:
+                detalle = ", ".join(f"{k}: {v}" for k, v in coerciones.items())
+                previa = resultado.advertencias.get(nombre)
+                aviso = f"valores no parseables ({detalle})"
+                resultado.advertencias[nombre] = f"{previa}; {aviso}" if previa else aviso
             tablas[nombre] = df
             resultado.tablas_registradas[nombre] = len(df)
         except Exception as e:  # noqa: BLE001
@@ -143,7 +170,12 @@ def _construir_almacen(store, tablas: Dict[str, pd.DataFrame],
     t1 = time()
     resultado.estructura = store.construir_estructura(tablas)
     resultado.tiempo_estructura = round(resultado.tiempo_estructura + (time() - t1), 3)
-    resultado.n_vistas = len(VISTAS_ANALITICA)
+    fallidas = getattr(store, "vistas_fallidas", None) or []
+    resultado.n_vistas = len(VISTAS_ANALITICA) - len(fallidas)
+    if fallidas:
+        resultado.advertencias["vistas"] = (
+            "vistas no creadas (faltan tablas de origen): " + ", ".join(fallidas)
+        )
 
 
 def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,

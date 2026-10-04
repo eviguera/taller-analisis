@@ -12,6 +12,8 @@ Estructura del almacen:
 
 from __future__ import annotations
 
+import re
+
 import duckdb
 import pandas as pd
 from pathlib import Path
@@ -32,6 +34,7 @@ class DataStore:
         self.cache_dir = Path(cache_dir) if cache_dir else Path(db_path).parent / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.usar_cache = usar_cache
+        self.vistas_fallidas: list[str] = []
         self._conn = duckdb.connect(str(self.db_path))
         for stmt in SQL_ARRANQUE:
             self._conn.execute(stmt)
@@ -76,8 +79,10 @@ class DataStore:
             except Exception as e:  # noqa: BLE001
                 try:
                     self._conn.unregister("__tmp_core")
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as e2:  # noqa: BLE001
+                    import logging
+                    logging.getLogger("taller.storage").debug(
+                        "No se pudo desregistrar __tmp_core tras fallo: %s", e2)
                 errores.append(str(e))
         raise ValueError(f"No se pudo registrar core.{nombre}: " + " | ".join(errores))
 
@@ -148,8 +153,19 @@ class DataStore:
             hechos = self.tabla("factura_detalle")
             self.registrar_tabla_core("factura_detalle", hechos)
 
-        for vista in VISTAS_ANALITICA.values():
-            self.ejecutar(vista)
+        # Vistas: una que referencie un objeto inexistente (p. ej. un
+        # workspace sin factura_detalle) no debe abortar todo el ETL; se
+        # registra y se continua con las demas.
+        vistas_fallidas = []
+        for nombre_vista, vista in VISTAS_ANALITICA.items():
+            try:
+                self.ejecutar(vista)
+            except Exception as e:  # noqa: BLE001
+                import logging
+                logging.getLogger("taller.storage").warning(
+                    "No se pudo crear la vista %s: %s", nombre_vista, e)
+                vistas_fallidas.append(nombre_vista)
+        self.vistas_fallidas = vistas_fallidas
 
         return {
             nombre: len(tablas[nombre])
@@ -157,14 +173,22 @@ class DataStore:
             if nombre in tablas and tablas[nombre] is not None and not tablas[nombre].empty
         }
 
+    @staticmethod
+    def _columna(col: str) -> str:
+        """Identificador de columna entre comillas (comillas dobles escapadas)."""
+        return '"' + str(col).replace('"', '""') + '"'
+
     def consultar_vista(self, nombre: str) -> pd.DataFrame:
         """Consulta una vista del esquema ``analitica``."""
+        nombre = self._nombre_valido(nombre)
         columnas = [r[0] for r in self._conn.execute(
-            f"SELECT column_name FROM information_schema.columns "
-            f"WHERE table_schema='analitica' AND table_name='{self._nombre_valido(nombre)}'"
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='analitica' AND table_name=?",
+            [nombre]
         ).fetchall()]
-        cols_str = ", ".join(f'"{c}"' for c in columnas)
-        return self._conn.execute(f'SELECT {cols_str} FROM analitica."{self._nombre_valido(nombre)}"').fetchdf()
+        cols_str = ", ".join(self._columna(c) for c in columnas)
+        return self._conn.execute(
+            f'SELECT {cols_str} FROM analitica.{self._columna(nombre)}').fetchdf()
 
     def info_estructura(self) -> pd.DataFrame:
         """Catalogo del almacen: esquema, objeto y tipo (tabla/vista)."""
@@ -181,11 +205,13 @@ class DataStore:
         if not self.existe_tabla(nombre):
             raise ValueError(f"Tabla no existe: {nombre}")
         columnas = [r[0] for r in self._conn.execute(
-            f"SELECT column_name FROM information_schema.columns "
-            f"WHERE table_name='{nombre}'"
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name=?",
+            [nombre]
         ).fetchall()]
-        cols_str = ", ".join(f'"{c}"' for c in columnas)
-        return self._conn.execute(f'SELECT {cols_str} FROM "{nombre}"').fetchdf()
+        cols_str = ", ".join(self._columna(c) for c in columnas)
+        return self._conn.execute(
+            f'SELECT {cols_str} FROM {self._columna(nombre)}').fetchdf()
 
     def leer_cache(self, nombre: str) -> Optional[pd.DataFrame]:
         archivo = self.cache_dir / f"{self._nombre_valido(nombre)}.parquet"
@@ -218,7 +244,19 @@ class DataStore:
     # ---------- utilidades ----------
     @staticmethod
     def _nombre_valido(nombre: str) -> str:
-        return str(nombre).strip().lower().replace(" ", "_")
+        """Normaliza y valida un identificador de tabla.
+
+        Los nombres provienen de archivos/config del usuario y viajan
+        interpolados en SQL (identificadores y literales): sin allowlist
+        estricta, un ``"`` o ``'`` rompe o inyecta. Ante la duda, lanza.
+        """
+        limpio = (str(nombre).strip().lower()
+                  .replace(" ", "_").replace("-", "_"))
+        if not re.fullmatch(r"[a-z0-9_]+", limpio) or not limpio:
+            raise ValueError(
+                f"Nombre de dataset/tabla no valido: {nombre!r}. "
+                "Usa solo letras, numeros y guiones bajos.")
+        return limpio
 
     @staticmethod
     def _saneada(df: pd.DataFrame) -> pd.DataFrame:

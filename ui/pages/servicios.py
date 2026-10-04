@@ -54,7 +54,7 @@ def principal():
             if not pop.empty:
                 with c.panel("Servicios mas solicitados", "Demanda acumulada por servicio",
                              icono=":material/task:"):
-                    st.plotly_chart(c.grafico_barras(
+                    c.mostrar_grafico(c.grafico_barras(
                         pop, "servicio", "frecuencia", color="frecuencia", color_cont="YlOrRd",
                         etiquetas={"servicio": "Servicio", "frecuencia": "Veces"},
                     ), width="stretch", height="stretch")
@@ -68,7 +68,7 @@ def principal():
             ing = detalle.groupby("servicio")["subtotal"].sum().sort_values(ascending=False).reset_index()
             with c.panel("Ingresos generados por servicio", "Donde se concentra la facturacion",
                          icono=":material/savings:"):
-                st.plotly_chart(c.grafico_barras(
+                c.mostrar_grafico(c.grafico_barras(
                     ing.head(15), "servicio", "subtotal", color="subtotal", color_cont="Blues",
                     etiquetas={"servicio": "Servicio", "subtotal": "Ingresos"},
                 ), width="stretch", height="stretch")
@@ -76,7 +76,7 @@ def principal():
                 ing, width="stretch", height=280,
                 column_config={
                     "servicio": "Servicio",
-                    "subtotal": st.column_config.NumberColumn("Ingresos", format="$#,##0"),
+                    "subtotal": st.column_config.NumberColumn("Ingresos", format=c.formato_moneda(cfg.moneda)),
                 },
             )
 
@@ -99,7 +99,7 @@ def principal():
                 sub = ts_agg[ts_agg["servicio"].isin(elegidos)]
                 with c.panel("Evolucion mensual", "Ingresos por servicio a lo largo del tiempo",
                              icono=":material/timeline:"):
-                    st.plotly_chart(c.grafico_linea(
+                    c.mostrar_grafico(c.grafico_linea(
                         sub, "Periodo", "subtotal", color="servicio",
                         etiquetas={"Periodo": "Mes", "subtotal": "Ingresos"},
                     ), width="stretch", height="stretch")
@@ -111,7 +111,7 @@ def principal():
             st.dataframe(
                 cat, width="stretch",
                 column_config={
-                    "precio_base": st.column_config.NumberColumn("Precio base", format="$#,##0"),
+                    "precio_base": st.column_config.NumberColumn("Precio base", format=c.formato_moneda(cfg.moneda)),
                 },
             )
             st.caption(f"**{len(cat)}** servicios en el catalogo")

@@ -118,6 +118,6 @@ def aplicar(tema: dict) -> None:
     oscuro = False
     try:
         oscuro = st.context.theme.type == "dark"
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001  (st.context fuera de runtime: se asume claro)
+        oscuro = False
     st.markdown(css(tema) + _css_premium(oscuro), unsafe_allow_html=True)
