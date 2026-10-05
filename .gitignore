@@ -31,3 +31,8 @@ config/usuarios.yml
 *.log
 # Repositorios de referencia (clonados, no son codigo nuestro)
 referencias/
+
+# Skills locales enlazadas desde .venv: son artefacto de entorno, no del repo
+# (el target es .venv/lib/python3.X/... y no existe en un clone ni en la imagen)
+.agents/
+.claude/

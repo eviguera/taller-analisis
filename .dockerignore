@@ -63,3 +63,7 @@ tests
 
 # Repositorios de referencia clonados
 referencias/
+
+# Skills locales enlazadas desde .venv (symlinks colgados en la imagen)
+.agents/
+.claude/
