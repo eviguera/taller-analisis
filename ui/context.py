@@ -207,15 +207,15 @@ def _validar_sql_solo_lectura(sql: str) -> None:
     conector_sql.validar_solo_lectura(sql, "La consulta")
 
 
-def _firma_datos(cfg, data) -> str:
-    """Firma barata de los datos del workspace: mtimes/tamaños de los originales
-    y forma de cada dataset.
+def _firma_fuentes(cfg) -> str:
+    """Firma barata de los originales del workspace: mtimes/tamaños y mapeo.
 
-    No recorre los valores (eso costaría como la carga misma): basta con que
-    cambie un fichero, o la forma de un frame, para que la firma cambie.
+    No recorre los valores (eso costaria como la carga misma): basta con que
+    cambie un fichero o el mapeo para que la firma cambie. Se separa de la
+    firma completa para poder cachear ``cargar_datos`` sin haber cargado
+    nada todavia.
     """
     from pathlib import Path
-    import pandas as pd
 
     partes = []
     # El mapeo de columnas tambien define la estructura: si cambia sin tocar
@@ -245,6 +245,14 @@ def _firma_datos(cfg, data) -> str:
             partes.append(f"{ruta.name}:{s.st_mtime_ns}:{s.st_size}")
     except OSError:
         pass
+    return "|".join(partes)
+
+
+def _firma_datos(cfg, data) -> str:
+    """Firma de los datos ya cargados: fuentes + forma de cada dataset."""
+    import pandas as pd
+
+    partes = [_firma_fuentes(cfg)]
     for nombre in sorted(data):
         df = data[nombre]
         if isinstance(df, pd.DataFrame):
