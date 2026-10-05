@@ -193,9 +193,3 @@ def badges_segmentos(rfm):
                    f'<strong>{int(n)}</strong>'
                    f'<span>{escape(str(segmento))}</span></div>')
     return f'<div class="seg-badges">{piezas}</div>'
-
-
-def notas_tabla(columnas, moneda_cfg="CLP"):
-    """Leyenda pequena de unidades para pie de tablas numericas."""
-    return (f'<p class="nota">Valores en {escape(str(moneda_cfg))}. '
-            "Cifras generadas con ETL y almacen DuckDB.</p>")

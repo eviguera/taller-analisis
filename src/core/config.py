@@ -5,6 +5,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Probabilidad de churn a partir de la cual se alerta. Es el valor por
+# defecto de la config ``alertas.churn_riesgo_umbral`` y lo comparten
+# alertas, recomendaciones y los reportes: tenerlo aqui evita que cada
+# llamador ponga su propio 0.60 y se desincronicen.
+UMBRAL_CHURN_DEFECTO = 0.60
+
+
+def umbral_churn(alertas_cfg) -> float:
+    """Umbral de churn efectivo: config del tenant o el defecto."""
+    valor = (alertas_cfg or {}).get("churn_riesgo_umbral")
+    return UMBRAL_CHURN_DEFECTO if valor is None else float(valor)
+
 
 @dataclass
 class DatasetConfig:

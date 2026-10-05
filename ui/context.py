@@ -131,9 +131,24 @@ def obtener_config():
     return _config_personalizada(ws, nombre, moneda, slogan, primario, acento)
 
 
-def cargar_datos(_cfg):
-    """Carga los datasets del workspace en memoria (usa cache parquet del pipeline)."""
-    return load_all(_cfg)
+def cargar_datos(_cfg, workspace: str | None = None):
+    """Carga los datasets del workspace en memoria.
+
+    Usa el cache parquet del pipeline y, encima, ``st.cache_data`` con la
+    clave ``(workspace, firma_de_fuentes)``: sin esto, cada rerun de cada
+    pagina volvia a escanear el directorio y a deserializar los parquet, y
+    los conectores externos se re-consultaban por red tambien. Cambiar un
+    fichero (o el mapeo) cambia la firma y refresca; ``sincronizar_conectores``
+    y el ETL llaman a ``st.cache_data.clear()`` para forzar la relectura.
+    """
+    ws = workspace or obtener_workspace()
+    return _cargar_datos_cacheado(ws, _firma_fuentes(_cfg), _cfg)
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_datos_cacheado(workspace: str, firma: str, cfg) -> dict:
+    """Cache de ``load_all``. ``workspace`` y ``firma`` van en la clave (regla 1)."""
+    return load_all(cfg)
 
 
 @st.cache_resource(show_spinner="Calculando analisis...")

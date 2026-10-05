@@ -23,6 +23,7 @@ from .branding import marca, ocasion, tipos_habilitados, periodos_meses
 from .estilos import css as css_reporte
 from .formato import (miles, moneda, fecha_es, periodo_es)
 from .insights import generar_insights
+from src.core.config import umbral_churn
 
 
 def _base_reports() -> Path:
@@ -200,7 +201,7 @@ class GeneradorReportes:
         resultados = pred.get("resultados")
         if resultados is None or resultados.empty:
             return ""
-        umbral = float((self.cfg.alertas or {}).get("churn_riesgo_umbral", 0.60) or 0.60)
+        umbral = umbral_churn(self.cfg.alertas)
         tabla = S.tabla(resultados,
                         columnas=["nombre", "recencia", "frecuencia", "monto",
                                   "churn", "prob_churn"],

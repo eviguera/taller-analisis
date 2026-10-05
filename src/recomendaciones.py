@@ -15,10 +15,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .core.config import umbral_churn as umbral_churn_cfg
 from .core.hechos import construir_factura_detalle
 from .predictions import Predictor
-
-CANALES = {"WhatsApp", "Email", "Llamada"}
 
 MENSAJES = {
     "Reactivar": "Hola {nombre}, queremos verte de nuevo: 15% de descuento en tu proxima visita.",
@@ -181,20 +180,6 @@ def proximo_servicio(data, cfg) -> pd.DataFrame:
     return df
 
 
-def _prioridad_servicio(candidato, km, edad) -> int:
-    """Prioridad 1..5: 5 = maxima urgencia."""
-    p = 3
-    if candidato["nota"] == "vencido" and candidato["meses_desde"] >= candidato["intervalo"] * 1.5:
-        p += 2
-    elif candidato["nota"] == "vencido":
-        p += 1
-    if km >= 80000 or edad >= 10:
-        p += 1
-    if km >= 150000 or edad >= 15:
-        p += 1
-    return int(min(5, p))
-
-
 def next_best_action(data, cfg, n=25, predictor=None) -> pd.DataFrame:
     """Siguiente mejor accion por cliente (reactivar, recordar, upsell, fidelidad).
 
@@ -216,7 +201,7 @@ def next_best_action(data, cfg, n=25, predictor=None) -> pd.DataFrame:
         top = progs.drop_duplicates("cliente", keep="first") if "cliente" in progs else progs
         servicio_por_cliente = dict(zip(top["cliente"], top["servicio_sugerido"]))
 
-    umbral_churn = float((cfg.alertas or {}).get("churn_riesgo_umbral", 0.60))
+    umbral_churn = umbral_churn_cfg(cfg.alertas)
     hoy = pd.Timestamp.today()
 
     # Vectorizar next_best_action

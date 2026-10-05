@@ -13,8 +13,13 @@ from src.loaders import get_loader
 from src.loaders.pspp_loader import exportar_sav
 
 from ui import components as c
-from ui.context import cargar_datos, exigir, obtener_config, obtener_estado, sesion
+from ui.context import (cargar_datos, exigir, exigir_escritura, obtener_config,
+                        obtener_estado, sesion)
 from src.core.calidad import resumen as resumen_calidad
+
+# Cuota por archivo en la subida: sin ella un usuario autenticado puede
+# llenar el disco del contenedor, que todos los tenants comparten.
+LIMITE_SUBIDA_BYTES = 200 * 1024 * 1024
 
 EJEMPLOS_SQL = {
     "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
@@ -126,16 +131,30 @@ def principal():
                     help="Puedes cargar los archivos que exporta PSPP (.sav, .por) o hojas de calculo.",
                 )
                 if subidos:
+                    exigir_escritura(
+                        "Solo un administrador puede importar archivos en el workspace.")
                     destino_dir = Path(cfg.directorio_datos)
                     destino_dir.mkdir(parents=True, exist_ok=True)
                     guardados = 0
+                    excedidos = 0
                     for up in subidos:
+                        # Sin cuota, cualquier usuario autenticado podia llenar el
+                        # disco del contenedor (compartido por todos los tenants)
+                        # enviando ficheros grandes o demasiados.
+                        if up.size and up.size > LIMITE_SUBIDA_BYTES:
+                            excedidos += 1
+                            continue
                         # .name descarta cualquier ruta que traiga el nombre
                         # subido ("../../x"): el archivo tiene que caer dentro
                         # del directorio del workspace y de ningun otro sitio.
                         (destino_dir / Path(up.name).name).write_bytes(up.getbuffer())
                         guardados += 1
-                    st.success(f"{guardados} archivo(s) guardados en {destino_dir}")
+                    if excedidos:
+                        st.warning(
+                            f"{excedidos} archivo(s) superan el limite de "
+                            f"{LIMITE_SUBIDA_BYTES // (1024 * 1024)} MB y no se guardaron.")
+                    if guardados:
+                        st.success(f"{guardados} archivo(s) guardados en {destino_dir}")
 
             st.markdown("**Archivos detectados**")
             archivos = escanear_directorio(directorio)
@@ -177,6 +196,9 @@ def principal():
                            "y registra las tablas en DuckDB (almacen analitico).")
                 if st.button("Procesar datos ahora", type="primary", icon=":material/play_arrow:"):
                     from ui.context import ejecutar_etl_ui
+                    # El ETL reescribe los datos y el almacen del workspace:
+                    # el permiso se comprueba aqui, no solo con ocultar la pestana.
+                    exigir_escritura()
                     with st.status("Procesando datos (ETL)...", expanded=False) as estado:
                         resultado = ejecutar_etl_ui()
                     if resultado.ok:
@@ -664,6 +686,10 @@ def _wizard_primer_uso():
                      icon=":material/auto_awesome:", width="stretch",
                      key="wizard_generar_ejemplo"):
             from generate_data import main as generar_ejemplos
+
+            # Escribe ficheros en el workspace: mismo criterio que el resto
+            # de acciones que persisten.
+            exigir_escritura()
 
             # Los archivos van al directorio de datos del workspace
             # activo, no al data/ de la raiz (regla 1: aislamiento).

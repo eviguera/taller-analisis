@@ -19,7 +19,7 @@ from typing import List, Optional
 import pandas as pd
 
 from .analyzer import Analyzer
-from .core.config import AppConfig
+from .core.config import AppConfig, umbral_churn
 from .predictions import Predictor
 
 SEVERIDADES = {"critica": 0, "media": 1, "baja": 2}
@@ -74,7 +74,7 @@ def evaluar_alertas(cfg: AppConfig, data: dict, analyzer=None, predictor=None) -
 
     # ---- Regla: riesgo de churn ----
     if reglas_activas["churn"]:
-        umbral = float(ac.get("churn_riesgo_umbral", 0.60))
+        umbral = umbral_churn(ac)
         churn = predictor.predecir_churn()
         if not churn["resultados"].empty and "prob_churn" in churn["resultados"]:
             en_riesgo = churn["resultados"][churn["resultados"]["prob_churn"] >= umbral]

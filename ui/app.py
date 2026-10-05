@@ -19,10 +19,6 @@ from src.core import auth
 from src.core.templates import lista_verticales
 
 
-def _kiosco_activo() -> bool:
-    return str(st.query_params.get("kiosco", "0")) in ("1", "true", "verdadero")
-
-
 def _selector_workspace(sesion: auth.Sesion):
     """Selectbox de empresa (workspace) + alta de nuevas empresas.
 
@@ -77,7 +73,7 @@ def _selector_workspace(sesion: auth.Sesion):
 def main():
     cfg_head = context.obtener_config()
     whitelabel = cfg_head.whitelabel or {}
-    kiosco = _kiosco_activo()
+    kiosco = context.en_kiosco()
     sesion = context.sesion()
 
     st.set_page_config(

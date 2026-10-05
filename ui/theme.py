@@ -82,6 +82,15 @@ def _css_premium(oscuridad: bool) -> str:
         letter-spacing: 0.02em;
         opacity: 0.75;
     }}
+    /* metricValueFontSize = 2.5rem fijo desborda cuando una fila de
+       kpi_grid tiene muchas tarjetas (o el valor es largo). Aqui baja
+       con el ancho disponible pero sin pasar de 2.5rem, y el valor se
+       parte en vez de salirse de la tarjeta. */
+    [data-testid="stMetricValue"] {{
+        font-size: clamp(1.35rem, 1.1rem + 1vw, 2.5rem);
+        line-height: 1.15;
+        overflow-wrap: anywhere;
+    }}
     [data-testid="stVerticalBlockBorderWrapper"] {{
         box-shadow: {sombra_panel};
     }}
