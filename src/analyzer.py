@@ -36,7 +36,8 @@ class Analyzer:
         return series
 
     def ingresos_por_marca(self):
-        df = self.df.copy()
+        # sin copy: groupby no muta el frame y el copy de 1M filas cuesta
+        df = self.df
         agrupado = df.groupby("marca").agg(
             ingresos=("total", "sum"),
             facturas=("id", "count"),
@@ -68,13 +69,20 @@ class Analyzer:
     def servicios_mas_solicitados(self):
         if "detalles" not in self.df:
             return pd.DataFrame()
-        df = self.df.copy()
+        df = self.df
         servicios = df["detalles"].str.split(";").explode()
         servicios = servicios[servicios.notna() & (servicios != "")]
-        ids = servicios.str.split(":").str[0]
-        contador = ids.astype(int).value_counts().reset_index()
+        base = servicios.str.split(":").str[0]
+        # Ruta rapida: astype directo (como siempre). Si hay un id que no
+        # es entero, en vez de tumbar el panel se cae al coercer con
+        # to_numeric y se descartan los que no se pudieron convertir.
+        try:
+            ids = base.astype("int64")
+        except (TypeError, ValueError):
+            ids = pd.to_numeric(base, errors="coerce").dropna().astype("int64")
+        # value_counts ya devuelve ordenado por frecuencia descendente.
+        contador = ids.value_counts().reset_index()
         contador.columns = ["servicio_id", "frecuencia"]
-        contador = contador.sort_values("frecuencia", ascending=False)
         if "servicios" in self.data:
             mapa_nombres = self.data["servicios"].set_index("id")["nombre"].to_dict()
             contador["servicio"] = contador["servicio_id"].map(mapa_nombres).fillna(contador["servicio_id"])
@@ -82,8 +90,8 @@ class Analyzer:
         return contador[["servicio", "frecuencia"]]
 
     def clientes_top(self, n=10):
-        df = self.df.copy()
-        agrupado = df.groupby(["cliente_id", "nombre"]).agg(
+        # sin copy: groupby.agg no muta self.df
+        agrupado = self.df.groupby(["cliente_id", "nombre"]).agg(
             facturas=("id", "count"),
             total_gastado=("total", "sum"),
             ultima_visita=("fecha", "max"),
@@ -92,12 +100,17 @@ class Analyzer:
 
     def clientes_rfm(self):
         hoy = self.df["fecha"].max()
-        df = self.df.copy()
-        rfm = df.groupby(["cliente_id", "nombre"]).agg(
-            recencia_dias=("fecha", lambda x: (hoy - x.max()).days),
+        # Sin lambdas en el agg: el max por grupo en Python escala mal con
+        # datasets grandes; con named agg va al motor. pop() entrega la
+        # columna y la quita, para no cambiar el esquema que devuelvo.
+        rfm = self.df.groupby(["cliente_id", "nombre"]).agg(
+            ultima_visita=("fecha", "max"),
             frecuencia=("id", "count"),
             monto=("total", "sum"),
         ).reset_index()
+        rfm["recencia_dias"] = (hoy - rfm.pop("ultima_visita")).dt.days
+        # mismo esquema y mismo orden de columnas que la version con lambda
+        rfm = rfm[["cliente_id", "nombre", "recencia_dias", "frecuencia", "monto"]]
 
         # Cuantiles para calificar. La recencia va al reves de F y M: pocos
         # dias sin comprar es lo bueno, asi que el cuantil mas bajo de
@@ -121,28 +134,28 @@ class Analyzer:
 
         rfm["rfm_score"] = rfm["R"].astype(int) + rfm["F"].astype(int) + rfm["M"].astype(int)
 
-        def segmentar(row):
-            r, f, m = int(row["R"]), int(row["F"]), int(row["M"])
-            if r >= 4 and f >= 4:
-                return "Campeones"
-            if r >= 4 and f >= 3:
-                return "Cliente Leal"
-            if m >= 4 and f >= 3:
-                return "Alto Valor"
-            if r <= 2 and f <= 2:
-                return "En Riesgo"
-            if r <= 2:
-                return "Perdido"
-            if r >= 3 and f >= 2:
-                return "Activo"
-            return "Promedio"
-
-        rfm["segmento"] = rfm.apply(segmentar, axis=1)
+        # np.select con las mismas condiciones y en el mismo orden que la
+        # cadena de if: vectorizado, sin recorrer fila a fila en Python.
+        r = rfm["R"].astype(int)
+        f = rfm["F"].astype(int)
+        m = rfm["M"].astype(int)
+        rfm["segmento"] = np.select(
+            [
+                (r >= 4) & (f >= 4),
+                (r >= 4) & (f >= 3),
+                (m >= 4) & (f >= 3),
+                (r <= 2) & (f <= 2),
+                r <= 2,
+                (r >= 3) & (f >= 2),
+            ],
+            ["Campeones", "Cliente Leal", "Alto Valor", "En Riesgo", "Perdido", "Activo"],
+            default="Promedio",
+        )
         return rfm.sort_values("rfm_score", ascending=False)
 
     def estacionalidad(self):
         """Analiza por mes, trimestre y dia de semana."""
-        df = self.df.copy()
+        df = self.df
         por_mes = df.groupby(df["fecha"].dt.month)["total"].agg(["sum", "count"]).reindex(
             range(1, 13), fill_value=0).reset_index()
         por_mes.columns = ["mes", "ingresos", "facturas"]
@@ -159,24 +172,33 @@ class Analyzer:
         inv["valor_inventario"] = inv["stock_actual"] * inv["precio_costo"]
         inv["margen"] = inv["precio_venta"] - inv["precio_costo"]
         inv["margen_pct"] = (inv["margen"] / inv["precio_costo"] * 100).round(1)
-        inv["estado_stock"] = inv.apply(
-            lambda r: "Bajo" if r["stock_actual"] <= r["stock_minimo"] else
-                      "Medio" if r["stock_actual"] <= r["stock_minimo"] * 1.5 else "Optimo",
-            axis=1
+        # np.select en vez de apply(axis=1): una condicion por fila en
+        # Python no escala con el inventario de un cliente grande.
+        inv["estado_stock"] = np.select(
+            [inv["stock_actual"] <= inv["stock_minimo"],
+             inv["stock_actual"] <= inv["stock_minimo"] * 1.5],
+            ["Bajo", "Medio"],
+            default="Optimo",
         )
         return inv
 
     def frecuencia_visitas_clientes(self):
-        df = self.df.copy()
-        return df.groupby("nombre").agg(
+        # diff() por grupo en el motor, no un sort_values() por lambda:
+        # el promedio de dias entre visitas es igual, pero sin recorrer
+        # cada cliente en Python.
+        orden = self.df[["nombre", "fecha", "id"]].sort_values(["nombre", "fecha"])
+        orden = orden.assign(dias=orden.groupby("nombre")["fecha"].diff().dt.days)
+        return orden.groupby("nombre").agg(
             facturas=("id", "count"),
-            promedio_dias_entre_visitas=("fecha", lambda x: x.sort_values().diff().dt.days.mean()),
+            promedio_dias_entre_visitas=("dias", "mean"),
         ).sort_values("facturas", ascending=False).reset_index()
 
     def detalle_servicios(self):
         nombres = self.data["servicios"].set_index("id")["nombre"].to_dict()
+        # Un solo copy y sin apply(isinstance): .str.split deja NaN en lo que
+        # no es texto y la mascara de ":" de mas abajo ya lo descarta, asi
+        # que el filtro fila a fila en Python sobraba.
         df = self.df.copy()
-        df = df[df["detalles"].apply(lambda x: isinstance(x, str))].copy()
         if df.empty:
             return pd.DataFrame()
         df["detalle_list"] = df["detalles"].str.split(";")
@@ -199,6 +221,6 @@ class Analyzer:
 
     def correlaciones(self):
         """Correlaciones entre variables relevantes."""
-        df = self.df[["total", "descuento", "antiguedad_cliente_dias", "anio"]].copy()
-        df = df.astype(float)
+        # astype(float) ya devuelve un frame nuevo: el copy sobraba.
+        df = self.df[["total", "descuento", "antiguedad_cliente_dias", "anio"]].astype(float)
         return df.corr().round(3)

@@ -46,42 +46,74 @@ MOTORES_SQL_EXTERNOS = ("postgres", "mysql", "sql")
 # Lista restrictiva de sentencias de lectura. No es un parser: ante la duda
 # se rechaza. Sin esto, un conector podria ejecutar DROP/ATTACH/COPY contra
 # la replica del ERP.
+#
+# Es la UNICA implementacion de "solo lectura" del repo: la consola SQL de la
+# UI y los conectores comparten la misma lista. Tenian dos, con palabras
+# distintas, y cada pantalla podia relajarse por su cuenta (el drift era una
+# cuestion de tiempo, no de si).
 _SOLO_LECTURA = re.compile(
-    r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)*(select|with|explain|describe|show)\b",
+    r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)*(?:select|with|explain|describe|show|"
+    r"table|values)\b",
     re.IGNORECASE | re.DOTALL,
 )
+# Union de lo que bloqueaban las dos listas historicas: escrituras y metadatos
+# (los conectores), CALL/FORCE y rutas relativas (la consola), y la lectura de
+# archivos que DuckDB expone como funcion.
 _PELIGROSO = re.compile(
-    r"\b(?:copy|attach|detach|install|load|export|import|pragma|delete|"
-    r"insert|update|drop|create|alter|truncate|vacuum|checkpoint|set|"
-    r"attach|pragma)\b"
-    r"|;|read_csv|read_parquet|read_json|glob\(",
+    r"\b(?:copy|attach|detach|install|load|export|import|call|pragma|delete|"
+    r"insert|update|drop|create|alter|truncate|vacuum|checkpoint|force|set)\b"
+    r"|;|read_\w+\s*\(|sniff_\w+\s*\(|\w+_scan\s*\(|glob\("
+    r"|\.\s*\./"
+    # Literales con forma de ruta o URL: FROM '/tmp/x.csv', FROM 'file://...'
+    # o FROM 'http://...' leen ficheros del servidor o hacen SSRF.
+    r"|'(?:/|~|\.\.|file:|https?:|s3:|gs:|ftp:)"
+    # ...y el primo callado: `FROM 'clientes.csv'` (relativo, sin barra) DuckDB
+    # lo lee igual. Cualquier literal con extension de dato es un fichero.
+    r"|['\"][^'\"]*\.(?:csv|tsv|parquet|json|jsonl|ndjson|xlsx|xls|db|duckdb|"
+    r"sqlite)['\"]",
     re.IGNORECASE,
 )
 
 
-def validar_solo_lectura(consulta: str) -> None:
-    """Deja pasar una unica sentencia de lectura; si no, lanza ValueError."""
+def validar_solo_lectura(consulta: str, origen: str = "La consulta") -> None:
+    """Deja pasar una unica sentencia de lectura; si no, lanza ValueError.
+
+    ``origen`` solo cambia el texto del aviso (consola, conector...) para que
+    cada pantalla hable de lo suyo; la regla es la misma siempre.
+    """
     texto = (consulta or "").strip()
     if not texto:
-        raise ValueError("Un conector requiere una consulta SQL")
+        raise ValueError(f"{origen} esta vacia.")
     if not _SOLO_LECTURA.match(texto):
-        raise ValueError("Los conectores solo permiten consultas de lectura "
-                         "(SELECT, WITH, EXPLAIN, DESCRIBE, SHOW)")
+        raise ValueError(
+            f"{origen} solo admite consultas de lectura "
+            "(SELECT, WITH, EXPLAIN, DESCRIBE, SHOW, TABLE, VALUES).")
+    # Un ";" final es ruido de uso comun; uno intermedio separaria sentencias.
     if ";" in texto.rstrip(";"):
-        raise ValueError("Los conectores admiten una sola sentencia por vez.")
+        raise ValueError(f"{origen} admite una sola sentencia por vez.")
     if _PELIGROSO.search(texto.rstrip(";").rstrip()):
-        raise ValueError("La consulta contiene operaciones no permitidas en "
-                         "modo lectura (escrituras, ATTACH o lectura de archivos).")
+        raise ValueError(
+            f"{origen} contiene operaciones no permitidas en modo lectura "
+            "(escrituras, ATTACH o lectura de archivos).")
 
 
-def _mensaje_error(e: Exception) -> str:
+def mensaje_error(e: Exception) -> str:
     """Mensaje de error seguro para UI y logs: nunca incluye el DSN.
 
     Las excepciones de SQLAlchemy/psycopg2 pueden traer credenciales en el
     DSN (`postgres://user:pass@...`); aqui solo queda el tipo y el texto.
+    Se exporta con nombre publico: la pagina de warehouse publica sus errores
+    con la misma proteccion que los conectores (si no, cada pantalla
+    reimplementa el enmascarado y algo se queda sin cubrir).
     """
     texto = str(e)
+    # URL clasica: postgres://user:pass@host
     texto = re.sub(r"(\w+://)[^@\s]+@", r"\1***@", texto)
+    # DSN keyword (libpq/SQLAlchemy): password=..., pwd=..., y el usuario,
+    # que en mensajes de "failed to connect user=X" tambien es sensible.
+    texto = re.sub(
+        r"\b(password|passwd|pwd|user|username)\s*=\s*('[^']*'|\"[^\"]*\"|\S+)",
+        r"\1=***", texto, flags=re.IGNORECASE)
     return f"{type(e).__name__}: {texto}"
 
 
@@ -95,8 +127,10 @@ def _dsn_resuelto(cfg: AppConfig, conector: Conector) -> str:
     dsn = str(conector.fuente or "")
     if dsn.startswith("sqlite:///"):
         rel = dsn[len("sqlite:///"):]
-        if not rel.startswith("/") and not rel.startswith("~"):
-            dsn = "sqlite:///" + str(cfg.directorio_datos / rel)
+        # Mismo confinamiento que en _resolver_fuente: el sqlite del
+        # conector tiene que estar dentro del workspace, sea ``../``, una
+        # ruta absoluta o un ``~``.
+        return "sqlite:///" + str(_dentro_del_workspace(cfg, cfg.directorio_datos / rel))
     return dsn
 
 
@@ -117,7 +151,7 @@ def _conectar_sqlalchemy(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         raise ValueError("Un conector SQL requiere una consulta SQL")
     engine = create_engine(dsn, connect_args={"connect_timeout": 10})
     try:
-        validar_solo_lectura(conector.consulta)
+        validar_solo_lectura(conector.consulta, "El conector")
         with engine.connect() as conn:
             return pd.read_sql_query(conector.consulta, conn)
     finally:
@@ -157,11 +191,28 @@ def parsear_conectores(cfg: AppConfig) -> List[Conector]:
     return conectores
 
 
+def _dentro_del_workspace(cfg: AppConfig, ruta) -> Path:
+    """Confiene una ruta de archivo al directorio de datos del workspace.
+
+    El ``fuente`` de un conector es un texto que escribe el usuario y viaja
+    por el config de la empresa: sin esta comprobacion, un ``../../otra-empresa
+    /data/x.db`` (o una ruta absoluta) dejaria leer el almacen de otra
+    empresa desde esta (regla 1: nada fuera del workspace).
+    """
+    base = Path(cfg.directorio_datos).resolve()
+    resuelta = Path(ruta).expanduser().resolve()
+    if not resuelta.is_relative_to(base):
+        raise ValueError(
+            f"La ruta apunta fuera del directorio de datos del workspace "
+            f"({resuelta}); usa una ruta relativa dentro de {base}.")
+    return resuelta
+
+
 def _resolver_fuente(cfg: AppConfig, conector: Conector) -> Path:
     """Resuelve una fuente relativa contra el directorio de datos del workspace."""
     if not conector.fuente or "://" in str(conector.fuente):
         return Path(str(conector.fuente or ""))
-    return cfg.directorio_datos / conector.fuente
+    return _dentro_del_workspace(cfg, cfg.directorio_datos / conector.fuente)
 
 
 def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
@@ -174,7 +225,7 @@ def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         ruta = _resolver_fuente(cfg, conector)
         if not ruta.exists():
             raise FileNotFoundError(f"No existe la BD sqlite: {ruta}")
-        validar_solo_lectura(conector.consulta)
+        validar_solo_lectura(conector.consulta, "El conector")
         # mode=ro: aunque la consulta pasara la validacion, el archivo de la
         # replica del ERP queda fisicamente en solo lectura.
         conn = sqlite3.connect(f"file:{ruta.resolve()}?mode=ro", uri=True, timeout=10)
@@ -187,7 +238,7 @@ def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         ruta = _resolver_fuente(cfg, conector)
         if not ruta.exists():
             raise FileNotFoundError(f"No existe la BD duckdb: {ruta}")
-        validar_solo_lectura(conector.consulta)
+        validar_solo_lectura(conector.consulta, "El conector")
         conn = duckdb.connect(str(ruta), read_only=True)
         try:
             return conn.execute(conector.consulta).fetchdf()
@@ -210,6 +261,18 @@ def conectar(cfg: AppConfig, conector: Conector) -> pd.DataFrame:
         url = str(conector.fuente or "")
         if not url:
             raise ValueError("Un conector url requiere una URL")
+        esquema = url.split("://", 1)[0].lower() if "://" in url else ""
+        if esquema == "file":
+            # file:// no es una URL remota: se trata como fichero local y
+            # confinada al workspace (antes podia leer /workspaces/<otro>).
+            ruta = _dentro_del_workspace(cfg, Path(url[len("file://"):]))
+            if not ruta.exists():
+                raise FileNotFoundError(f"No existe el CSV: {ruta}")
+            return pd.read_csv(ruta, **conector.parametros)
+        if esquema not in ("http", "https"):
+            raise ValueError(
+                "El motor url solo admite http/https (o file:// con ruta "
+                f"dentro del workspace); llego: '{esquema or url[:30]}'")
         return pd.read_csv(url, **conector.parametros)
     raise ValueError(f"Motor de conector no soportado: '{motor}'")
 
@@ -253,8 +316,8 @@ def ejecutar_conectores(cfg: AppConfig, ya_cargados: Optional[set] = None):
             if not df.empty:
                 datos[c.dataset] = _string_a_detalle(df, c.dataset)
         except Exception as e:  # noqa: BLE001
-            log.warning("Conector %s fallo: %s", c.nombre, _mensaje_error(e))
-            errores[c.nombre] = _mensaje_error(e)
+            log.warning("Conector %s fallo: %s", c.nombre, mensaje_error(e))
+            errores[c.nombre] = mensaje_error(e)
     return datos, errores
 
 

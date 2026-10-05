@@ -29,8 +29,15 @@ def _cfg(rules_cfg):
     return (rules_cfg or {}) or {}
 
 
-def evaluar_alertas(cfg: AppConfig, data: dict) -> List[dict]:
-    """Evalua todas las reglas configuradas y devuelve lista de alertas."""
+def evaluar_alertas(cfg: AppConfig, data: dict, analyzer=None, predictor=None) -> List[dict]:
+    """Evalua todas las reglas configuradas y devuelve lista de alertas.
+
+    ``analyzer``/``predictor`` opcionales: los constructores repiten
+    enriquecer_facturas (2 merges + copia del frame) y el entrenamiento del
+    churn, y sin estos parametros cada rerun de la pagina Alertas montaba un
+    Analyzer y un Predictor nuevos. Los llamadores de UI pasan los que ya
+    cachea ``obtener_estado()``.
+    """
     ac = _cfg(cfg.alertas)
     reglas_activas = {
         "stock_bajo": bool(ac.get("stock_bajo", True)),
@@ -40,8 +47,10 @@ def evaluar_alertas(cfg: AppConfig, data: dict) -> List[dict]:
     }
 
     alertas: List[dict] = []
-    analyzer = Analyzer(data)
-    predictor = Predictor(data, cfg=cfg)
+    if analyzer is None:
+        analyzer = Analyzer(data)
+    if predictor is None:
+        predictor = Predictor(data, cfg=cfg)
 
     # ---- Regla: stock bajo ----
     if reglas_activas["stock_bajo"]:

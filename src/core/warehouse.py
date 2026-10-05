@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 from .config import AppConfig
+from .conector_sql import mensaje_error
 
 log = logging.getLogger("taller.warehouse")
 
@@ -64,7 +65,10 @@ def _prefijo_efectivo(cfg: AppConfig, prefijo: str) -> str:
     """
     clave = _identificador(cfg.clave)
     base = prefijo or ""
-    if clave in base:
+    # Tiene que acabar en la clave + "_": comprobar que la clave aparece
+    # como subcadena no basta (clave "a" con prefijo "datos_" devolvia
+    # "datos_" sin clave de tenant y los workspaces volvian a pisarse).
+    if base.endswith(f"{clave}_"):
         return base
     return f"{base}{clave}_"
 
@@ -77,6 +81,34 @@ def _nombre_tabla(prefijo: str, objeto: str) -> str:
 def _tabla_publica(prefijo: str, esquema: str, objeto: str) -> str:
     mapa = {"datasets": "", "core": "core_", "analitica": "vista_"}
     return _nombre_tabla(prefijo, f"{mapa.get(esquema, '')}{objeto}")
+
+
+def _avisar_huerfanas(engine, base: str, efectivo: str) -> None:
+    """Avisa de tablas del esquema antiguo (publicadas sin clave de tenant).
+
+    Versiones previas publicaban ``<prefijo><objeto>`` sin la clave del
+    workspace: esas tablas siguen en el destino con datos mezclados de todos
+    los tenants, y ``ver()`` no las lista porque filtra por el prefijo
+    efectivo. No se borran solas (pueden ser de otra version del producto);
+    se avisa para que las revisen a mano.
+    """
+    if not base:
+        return
+    from sqlalchemy import inspect
+    try:
+        tablas = inspect(engine).get_table_names()
+    except Exception as e:  # noqa: BLE001
+        log.warning("No se pudo inspeccionar el destino para buscar tablas huerfanas: %s",
+                    mensaje_error(e))
+        return
+    huerfanas = [t for t in tablas if t.startswith(base) and not t.startswith(efectivo)]
+    if huerfanas:
+        orden = sorted(huerfanas)
+        muestra = ", ".join(orden[:10]) + ("..." if len(orden) > 10 else "")
+        log.warning(
+            "%d tabla(s) del esquema antiguo en el destino (sin clave de "
+            "workspace, con datos de todos los tenants): %s. Borralas a mano "
+            "cuando lo revises.", len(orden), muestra)
 
 
 def sincronizar(cfg: AppConfig, dsn: str,
@@ -102,7 +134,9 @@ def sincronizar(cfg: AppConfig, dsn: str,
 
     store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cfg.usar_cache)
     engine = _engine(dsn)
+    prefijo_base = prefijo
     prefijo = _prefijo_efectivo(cfg, prefijo)
+    _avisar_huerfanas(engine, prefijo_base, prefijo)
     publicados: List[Dict] = []
     try:
         info = store.info_estructura()
@@ -113,9 +147,10 @@ def sincronizar(cfg: AppConfig, dsn: str,
             objetos = info.loc[info["esquema"] == esquema, "objeto"].tolist()
             for objeto in objetos:
                 try:
-                    # identificador validado contra allowlist antes de interpolar
+                    # identificador validado contra allowlist y columnas
+                    # explicitas desde el catalogo, no SELECT *
                     ident = _identificador(objeto)
-                    df = store.consulta(f'SELECT * FROM "{esquema}"."{ident}"')
+                    df = store.consultar_objeto(esquema, ident)
                 except Exception as e:  # noqa: BLE001
                     log.warning("No se pudo leer %s.%s: %s", esquema, objeto, e)
                     continue

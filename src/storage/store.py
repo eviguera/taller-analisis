@@ -40,13 +40,26 @@ class DataStore:
             self._conn.execute(stmt)
 
     # ---------- registro y consulta ----------
+    @classmethod
+    def _lista_columnas(cls, df: pd.DataFrame) -> str:
+        """Columnas del dataframe entre comillas, para DDL/DML explicito.
+
+        El ``SELECT *`` meta las columnas en el orden que tenga el DataFrame:
+        si el DDL y el dataframe no calzan, el INSERT falla o rellena columna
+        a columna en otro orden. Lista explicita (y con lista de columnas en
+        el INSERT): el contrato queda escrito y el desalineamiento se ve.
+        """
+        return ", ".join(cls._columna(c) for c in df.columns)
+
     def registrar_tabla(self, nombre: str, df: pd.DataFrame, sobreescribir: bool = True, cache: bool = True):
         clean = self._saneada(df)
         nombre = self._nombre_valido(nombre)
         if sobreescribir:
             self._conn.execute(f'DROP TABLE IF EXISTS "{nombre}"')
         self._conn.register("__df_tmp", clean)
-        self._conn.execute(f'CREATE OR REPLACE TABLE "{nombre}" AS SELECT * FROM __df_tmp')
+        columnas = self._lista_columnas(clean)
+        self._conn.execute(
+            f'CREATE OR REPLACE TABLE "{nombre}" AS SELECT {columnas} FROM __df_tmp')
         self._conn.unregister("__df_tmp")
         if cache and self.usar_cache:
             archivo_cache = self.cache_dir / f"{nombre}.parquet"
@@ -56,6 +69,27 @@ class DataStore:
     def registrar_tablas(self, tablas: dict[str, pd.DataFrame]):
         for nombre, df in tablas.items():
             self.registrar_tabla(nombre, df)
+
+    # ---------- firma de la ultima carga (evita reconstruir sin cambios) ----------
+
+    def firma_carga(self, clave: str = "datos") -> str:
+        """Firma guardada de la ultima carga, o '' si no la hay."""
+        try:
+            fila = self._conn.execute(
+                "SELECT firma FROM giro_meta.carga WHERE clave=?", [clave]
+            ).fetchone()
+        except duckdb.Error:
+            return ""
+        return fila[0] if fila else ""
+
+    def guardar_firma(self, firma: str, clave: str = "datos") -> None:
+        """Persiste la firma de la ultima carga en el propio almacen."""
+        self.ejecutar(
+            'CREATE TABLE IF NOT EXISTS giro_meta.carga '
+            '(clave VARCHAR PRIMARY KEY, firma VARCHAR)')
+        self._conn.execute("DELETE FROM giro_meta.carga WHERE clave=?", [clave])
+        self._conn.execute(
+            "INSERT INTO giro_meta.carga VALUES (?, ?)", [clave, firma])
 
     def registrar_tabla_core(self, nombre: str, df: pd.DataFrame, con_claves: bool = True) -> str:
         """Registra una tabla derivada en el esquema ``core`` con claves.
@@ -73,7 +107,9 @@ class DataStore:
             try:
                 self.ejecutar(ddl_tabla_core(nombre, clean, con_claves=claves))
                 self._conn.register("__tmp_core", clean)
-                self._conn.execute(f'INSERT INTO core."{nombre}" SELECT * FROM __tmp_core')
+                columnas = self._lista_columnas(clean)
+                self._conn.execute(
+                    f'INSERT INTO core."{nombre}" ({columnas}) SELECT {columnas} FROM __tmp_core')
                 self._conn.unregister("__tmp_core")
                 return nombre
             except Exception as e:  # noqa: BLE001
@@ -87,6 +123,16 @@ class DataStore:
         raise ValueError(f"No se pudo registrar core.{nombre}: " + " | ".join(errores))
 
     def consulta(self, sql: str) -> pd.DataFrame:
+        # Camino de SQL arbitrario (consola). Ademas de la denylist de
+        # conector_sql, se corta el acceso externo de DuckDB: sin esto,
+        # read_text('/etc/...'), sniff_csv o un FROM con literal de ruta
+        # leen ficheros del servidor pese a pasar la validacion.
+        try:
+            self._conn.execute("SET enable_external_access=false")
+        except duckdb.Error as e:
+            import logging
+            logging.getLogger("taller.storage").warning(
+                "No se pudo restringir el acceso externo de DuckDB: %s", e)
         return self._conn.execute(sql).fetchdf()
 
     def ejecutar(self, sql: Any) -> None:
@@ -120,7 +166,9 @@ class DataStore:
             self._conn.register("__tmp_core", df)
             try:
                 self.ejecutar(ddl_tabla_core(nombre, df, con_claves=con_claves))
-                self._conn.execute(f'INSERT INTO core."{nombre}" SELECT * FROM __tmp_core')
+                columnas = self._lista_columnas(df)
+                self._conn.execute(
+                    f'INSERT INTO core."{nombre}" ({columnas}) SELECT {columnas} FROM __tmp_core')
             except Exception as e:
                 import logging
                 logging.getLogger("taller.storage").warning(
@@ -143,7 +191,9 @@ class DataStore:
                 df = self._saneada(df)
                 self.ejecutar(ddl_tabla_core(nombre, df, con_claves=False))
                 self._conn.register("__tmp_core", df)
-                self._conn.execute(f'INSERT INTO core."{nombre}" SELECT * FROM __tmp_core')
+                columnas = self._lista_columnas(df)
+                self._conn.execute(
+                    f'INSERT INTO core."{nombre}" ({columnas}) SELECT {columnas} FROM __tmp_core')
                 self._conn.unregister("__tmp_core")
 
         # Hechos relacionales: provienen de main."factura_detalle" (cargada
@@ -190,12 +240,37 @@ class DataStore:
         return self._conn.execute(
             f'SELECT {cols_str} FROM analitica.{self._columna(nombre)}').fetchdf()
 
+    def columnas(self, esquema: str, nombre: str) -> list[str]:
+        """Columnas de un objeto del almacen, leidas del catalogo.
+
+        Alimenta ``SELECT`` explicitos: la lista sale del information_schema
+        (con su orden), no del orden que tenga el DataFrame en memoria.
+        """
+        esquema = self._nombre_valido(esquema)
+        nombre = self._nombre_valido(nombre)
+        filas = self._conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema=? AND table_name=? ORDER BY ordinal_position",
+            [esquema, nombre],
+        ).fetchall()
+        return [str(r[0]) for r in filas]
+
+    def consultar_objeto(self, esquema: str, nombre: str) -> pd.DataFrame:
+        """Lee ``<esquema>.<nombre>`` con lista explicita de columnas."""
+        columnas = self.columnas(esquema, nombre)
+        if not columnas:
+            raise ValueError(f"Objeto sin columnas: {esquema}.{nombre}")
+        lista = ", ".join(self._columna(c) for c in columnas)
+        return self._conn.execute(
+            f'SELECT {lista} FROM {self._columna(esquema)}.{self._columna(nombre)}'
+        ).fetchdf()
+
     def info_estructura(self) -> pd.DataFrame:
         """Catalogo del almacen: esquema, objeto y tipo (tabla/vista)."""
         sql = """
         SELECT table_schema AS esquema, table_name AS objeto, table_type AS tipo
         FROM information_schema.tables
-        WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+        WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'giro_meta')
         ORDER BY 1, 2
         """
         return self._conn.execute(sql).fetchdf()

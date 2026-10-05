@@ -29,3 +29,5 @@ config/usuarios.yml
 # Sistema
 .DS_Store
 *.log
+# Repositorios de referencia (clonados, no son codigo nuestro)
+referencias/

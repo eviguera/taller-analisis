@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from .calidad import evaluar_conjunto
 from .catalog import escanear_directorio, vincular_archivos_a_datasets, ArchivoDetectado
 from .config import AppConfig, DatasetConfig
 from .config_manager import ETIQUETAS_ESPERADAS
@@ -38,6 +39,9 @@ class ResultadoETL:
         self.tiempo_carga: float = 0.0
         self.tiempo_estructura: float = 0.0
         self.n_vistas: int = 0
+        # Resultado plano de las reglas de calidad (src/core/calidad.py):
+        # una fila por regla, con evaluadas/cumplen/tasa y estado.
+        self.calidad: pd.DataFrame = pd.DataFrame()
 
     @property
     def ok(self) -> bool:
@@ -196,9 +200,19 @@ def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
     tablas = _cargar_archivos_locales(cfg, directorio, asignaciones, resultado)
     tablas = _ejecutar_conectores_externos(cfg, tablas, resultado)
 
+    # Calidad sobre lo que realmente va a entrar al almacen: mismos datos
+    # que registra, mismas reglas que ve el usuario en la pantalla.
+    resultado.calidad = evaluar_conjunto(tablas)
+
     if store is not None:
         try:
             _construir_almacen(store, tablas, resultado)
+            # El ETL reescribe los parquet sin tocar los originales: la firma
+            # de "ultima carga" del almacen (que usa la UI para no
+            # re-registrar en cada rerun) queda invalidada acá, para el
+            # camino CLI y para el de la UI a la vez.
+            store.guardar_firma("", "datos")
+            store.guardar_firma("", "estructura")
         finally:
             store.cerrar()
 

@@ -195,13 +195,16 @@ def _prioridad_servicio(candidato, km, edad) -> int:
     return int(min(5, p))
 
 
-def next_best_action(data, cfg, n=25) -> pd.DataFrame:
+def next_best_action(data, cfg, n=25, predictor=None) -> pd.DataFrame:
     """Siguiente mejor accion por cliente (reactivar, recordar, upsell, fidelidad).
 
     Cruza el churn (ejecutado desde el registry si esta fresco) con la
     segmentacion RFM y el mantenimiento predictivo por vehiculo.
+
+    ``predictor`` opcional: reutiliza el que cachea ``obtener_estado()`` en
+    vez de instanciar otro y reentrenar el churn en cada rerun.
     """
-    predictor_contexto = Predictor(data, cfg=cfg)
+    predictor_contexto = predictor if predictor is not None else Predictor(data, cfg=cfg)
     churn = predictor_contexto.predecir_churn()
     rfm = churn["resultados"].copy() if not churn["resultados"].empty else pd.DataFrame()
     if rfm.empty:

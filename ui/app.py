@@ -109,11 +109,14 @@ def _paginas_por_rol(sesion, kiosco: bool):
 
     ``negocio`` (unidad economica interna) y ``datos`` (ETL, conectores, SQL,
     warehouse) son de administracion: un usuario ``cliente`` no debe verlas.
+    En modo presentacion se ocultan siempre, tambien para un admin: el banner
+    promete solo lectura y antes el parametro ``kiosco`` se ignoraba, asi que
+    un admin con SSO entraba al kiosco y seguia viendo la consola SQL.
     """
-    if sesion.puede(auth.PERMISO_GESTIONAR_EMPRESAS):
-        return PAGINAS
-    ocultan = {"negocio", "datos"}
-    return [p for p in PAGINAS if p[1] not in ocultan]
+    if kiosco or not sesion.puede(auth.PERMISO_GESTIONAR_EMPRESAS):
+        ocultan = {"negocio", "datos"}
+        return [p for p in PAGINAS if p[1] not in ocultan]
+    return PAGINAS
 
 
 def _navegar(cfg_head, kiosco: bool):
@@ -126,9 +129,12 @@ def _navegar(cfg_head, kiosco: bool):
     tema_mod.aplicar(cfg_head.tema)
 
     with st.sidebar:
-        st.markdown(tema_mod.logo_html(
-            (cfg_head.tema or {}).get("texto_logo", "GIRO Analytics"),
-            cfg_head.slogan), unsafe_allow_html=True)
+        # En modo normal el logo ya lo emitio _sidebar_completa; aqui solo
+        # se pinta en kiosco, que usa _sidebar_kiosco y no tiene el suyo.
+        if kiosco:
+            st.markdown(tema_mod.logo_html(
+                (cfg_head.tema or {}).get("texto_logo", "GIRO Analytics"),
+                cfg_head.slogan), unsafe_allow_html=True)
 
     pg = st.navigation(paginas, position="sidebar", expanded=not kiosco)
     if kiosco:

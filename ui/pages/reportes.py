@@ -15,7 +15,7 @@ from src.reporting import branding as br_mod
 from src.reporting.engine import GeneradorReportes, listar_generados
 
 from ui import components as c
-from ui.context import obtener_estado
+from ui.context import en_kiosco, exigir_escritura, obtener_estado
 
 
 def _ruta_config(cfg) -> Path:
@@ -127,9 +127,13 @@ def principal():
             ocasion_def = st.text_input("Rotulo de portada", value=br_mod.ocasion(cfg),
                                         key="rpt_ocasion",
                                         placeholder="Reporte mensual")
+        if en_kiosco():
+            st.caption("Modo presentacion: la marca se edita fuera del kiosco.")
         guardar = st.button("Guardar marca", icon=":material/save:",
-                            type="primary", key="rpt_guardar")
+                            type="primary", key="rpt_guardar",
+                            disabled=en_kiosco())
         if guardar:
+            exigir_escritura("Solo un administrador puede guardar la marca.")
             try:
                 _guardar_branding(cfg, {
                     "consultora": consultora.strip(),
@@ -163,7 +167,7 @@ def principal():
             st.space("small")
             generar = st.button("Generar reporte", type="primary",
                                 icon=":material/auto_awesome:", width="stretch",
-                                key="rpt_generar")
+                                key="rpt_generar", disabled=en_kiosco())
 
         if tipo == catalogo.TODOS:
             st.caption("Se generan: " + ", ".join(

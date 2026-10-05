@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from ui import components as c
-from ui.context import obtener_estado
+from ui.context import en_kiosco, exigir_escritura, obtener_estado
 from src.recomendaciones import next_best_action, proximo_servicio
 
 
@@ -25,7 +25,7 @@ def principal():
 
     with tab_aba:
         if tab_aba.open:
-            acciones = next_best_action(data, cfg)
+            acciones = next_best_action(data, cfg, predictor=predictor)
             if acciones.empty:
                 c.vacio("Sin facturas suficientes para calcular acciones.",
                         icono=":material/task_alt:")
@@ -124,7 +124,11 @@ def principal():
                 st.info("Aun no hay modelos persistidos. Entrena en la pagina de Predicciones "
                         "y se guardaran automaticamente.")
 
-            if st.button("Reentrenar todos los modelos", icon=":material/restart_alt:"):
+            if en_kiosco():
+                st.caption("Modo presentacion: los modelos se reentrenan fuera del kiosco.")
+            if st.button("Reentrenar todos los modelos", icon=":material/restart_alt:",
+                         disabled=en_kiosco()):
+                exigir_escritura("Solo un administrador puede reentrenar los modelos.")
                 for tipo in ("churn", "ingresos"):
                     predictor.reentrenar(tipo)
                 st.cache_resource.clear()

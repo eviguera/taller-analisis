@@ -11,11 +11,11 @@ permisos sobre una empresa no puede llegar a su datos aunque manipule
 ``st.session_state``.
 """
 
-import re
+import hashlib
 
 import streamlit as st
 
-from src.core import auth
+from src.core import auth, conector_sql
 from src.core.config_manager import cargar_config
 from src.core.pipeline import procesar_etl
 from src.data_loader import load_all, get_data_summary, get_store
@@ -26,6 +26,16 @@ from src import workspaces
 
 def _kiosco() -> bool:
     return str(st.query_params.get("kiosco", "0")) in ("1", "true", "verdadero")
+
+
+def en_kiosco() -> bool:
+    """True si la pagina se sirve en modo presentacion (``?kiosco=1``).
+
+    Las paginas lo consultan para ocultar las acciones que escriben. El
+    kiosco promete solo lectura y esa promesa tiene que valer tambien para
+    un admin que entra con su sesion abierta, no solo para el visitante.
+    """
+    return _kiosco()
 
 
 def _token() -> str:
@@ -67,6 +77,17 @@ def exigir(permiso: str, mensaje: str = "") -> None:
     st.error(mensaje or "No tienes permiso para esta seccion.")
     st.caption("Pide a un administrador que te otorgue acceso.")
     st.stop()
+
+
+def exigir_escritura(mensaje: str = "") -> None:
+    """Comprueba el permiso EN la accion que escribe, no en el widget.
+
+    Ocultar o deshabilitar un boton no es autorizacion: la pagina se puede
+    abrir por URL y el widget se puede reactivar. Toda accion que persiste
+    config, modelos o dispara un envio tiene que pasar por aqui.
+    """
+    exigir(auth.PERMISO_GESTIONAR_EMPRESAS,
+           mensaje or "Solo un administrador puede realizar esta accion.")
 
 
 @st.cache_resource(show_spinner="Cargando configuracion...")
@@ -169,50 +190,88 @@ def consulta_sql(sql: str):
     store = get_store(cfg)
     try:
         data = cargar_datos(cfg)
-        if data:
-            store.registrar_tablas(data)
+        _sincronizar_almacen(store, cfg, data)
         return store.consulta(sql)
     finally:
         store.cerrar()
 
 
-# Sentencias que escriben, se conectan a otro sistema o tocan el sistema de
-# archivos. La conexion de DuckDB puede hacer COPY, ATTACH e INSTALL, asi que
-# sin esta lista un "SELECT" podria exfiltrar o reescribir el almacen.
-_SQL_SOLO_LECTURA = re.compile(
-    r"^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)*(select|with|explain|describe|show|"
-    r"table|values)\b",
-    re.IGNORECASE | re.DOTALL,
-)
-# PRAGMA queda fuera de la lista blanca: en DuckDB algunas pragmas importan o
-# copian bases de datos completas, no solo reportan ajustes.
-_SQL_PELIGROSO = re.compile(
-    r"\b(?:copy|attach|detach|install|load|export|import|call|pragma|delete|"
-    r"insert|update|drop|create|alter|truncate|vacuum|checkpoint|force|set)\b"
-    r"|;|\.\s*\./|read_csv|read_parquet|read_json|glob\(",
-    re.IGNORECASE,
-)
-
-
 def _validar_sql_solo_lectura(sql: str) -> None:
-    """Deja pasar una unica sentencia de lectura.
+    """La consola SQL aplica la MISMA regla que los conectores.
 
-    No es un parser SQL: es una lista restrictiva. Ante la duda, rechaza.
+    Antes habia aqui una lista propia de sentencias, paralela a la de
+    ``conector_sql``: dos listas con palabras distintas significa que una
+    pantalla puede relajarse sin que la otra se entere. Ahora hay una sola
+    implementacion compartida y aqui solo queda la llamada.
     """
-    texto = (sql or "").strip()
-    if not texto:
-        raise ValueError("Escribe una consulta.")
-    if not _SQL_SOLO_LECTURA.match(texto):
-        raise ValueError(
-            "Solo se admiten consultas de lectura (SELECT, WITH, EXPLAIN, "
-            "DESCRIBE, SHOW, VALUES).")
-    # Un ";" final es ruido de uso comun; uno intermedio separaria sentencias.
-    if ";" in texto.rstrip(";"):
-        raise ValueError("Ejecuta una sola sentencia por vez.")
-    if _SQL_PELIGROSO.search(texto.rstrip(";").rstrip()):
-        raise ValueError(
-            "La consulta contiene operaciones no permitidas en modo lectura. "
-            "Las escrituras y el acceso a archivos o red quedan bloqueados.")
+    conector_sql.validar_solo_lectura(sql, "La consulta")
+
+
+def _firma_datos(cfg, data) -> str:
+    """Firma barata de los datos del workspace: mtimes/tamaños de los originales
+    y forma de cada dataset.
+
+    No recorre los valores (eso costaría como la carga misma): basta con que
+    cambie un fichero, o la forma de un frame, para que la firma cambie.
+    """
+    from pathlib import Path
+    import pandas as pd
+
+    partes = []
+    # El mapeo de columnas tambien define la estructura: si cambia sin tocar
+    # los ficheros, la firma debe cambiar igualmente.
+    try:
+        for nombre, dcfg in sorted((getattr(cfg, "datasets", None) or {}).items()):
+            partes.append(f"map:{nombre}:{sorted((dcfg.mapeo or {}).items())}")
+    except (AttributeError, TypeError):
+        pass
+    try:
+        base = Path(cfg.directorio_datos)
+        # El propio almacen vive aqui (almacen.duckdb y su .wal): cada
+        # escritura en la BD cambiaria su mtime y la firma se invalidaria a
+        # si misma en bucle, registrando siempre.
+        db = Path(cfg.db_path).name
+        excluidos = {db, f"{db}.wal", f"{db}.tmp"}
+        for ruta in sorted(base.iterdir()):
+            # Solo ficheros originales: los directorios (p. ej. data/cache,
+            # que esta DENTRO de directorio_datos) cambian de mtime al
+            # escribir la propia cache y la firma se invalidaria sin motivo.
+            if not ruta.is_file() or ruta.name in excluidos:
+                continue
+            try:
+                s = ruta.stat()
+            except OSError:
+                continue
+            partes.append(f"{ruta.name}:{s.st_mtime_ns}:{s.st_size}")
+    except OSError:
+        pass
+    for nombre in sorted(data):
+        df = data[nombre]
+        if isinstance(df, pd.DataFrame):
+            partes.append(f"{nombre}:{df.shape[0]}x{df.shape[1]}:{len(df.columns)}")
+    return hashlib.sha1("|".join(partes).encode("utf-8")).hexdigest()
+
+
+def _sincronizar_almacen(store, cfg, data, materializar: bool = False) -> bool:
+    """Registra los datos en DuckDB solo si cambiaron desde la ultima carga.
+
+    Antes, leer UNA vista (o abrir la pestaña Esquema) volvía a hacer
+    DROP+CREATE de cada tabla y a reconstruir core/analitica entero en cada
+    rerun. La firma vive en ``giro_meta`` dentro del propio fichero DuckDB,
+    asi que si se recrea la DB la firma desaparece con ella.
+    """
+    if not data:
+        return False
+    firma = _firma_datos(cfg, data)
+    registrados = store.firma_carga("datos") == firma
+    if not registrados:
+        store.registrar_tablas(data)
+        store.guardar_firma(firma, "datos")
+    if materializar:
+        if store.firma_carga("estructura") != firma:
+            store.construir_estructura(data)
+            store.guardar_firma(firma, "estructura")
+    return not registrados
 
 
 def obtener_estructura():
@@ -222,9 +281,7 @@ def obtener_estructura():
     store = get_store(cfg)
     try:
         data = cargar_datos(cfg)
-        if data:
-            store.registrar_tablas(data)
-            store.construir_estructura(data)
+        _sincronizar_almacen(store, cfg, data, materializar=True)
         return store.info_estructura()
     finally:
         store.cerrar()
@@ -236,9 +293,7 @@ def consultar_vista(nombre: str):
     store = get_store(cfg)
     try:
         data = cargar_datos(cfg)
-        if data:
-            store.registrar_tablas(data)
-            store.construir_estructura(data)
+        _sincronizar_almacen(store, cfg, data, materializar=True)
         return store.consultar_vista(nombre)
     finally:
         store.cerrar()

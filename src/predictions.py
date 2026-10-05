@@ -324,7 +324,16 @@ class Predictor:
         """
         inv = self.data.get("inventario", pd.DataFrame()).copy()
         if inv.empty:
-            return pd.DataFrame(columns=["producto", "recomendacion"])
+            # Mismo esquema que devuelve la rama con datos: la pagina de
+            # Predicciones selecciona 10 de estas columnas y con un frame de
+            # dos columnas crasheaba (KeyError) en cualquier workspace sin
+            # inventario.
+            return pd.DataFrame(columns=[
+                "id", "producto", "categoria", "stock_actual", "stock_minimo",
+                "demanda_mensual", "tasa_rotacion_mensual", "stock_objetivo",
+                "meses_cobertura", "cantidad_recomendada", "recomendacion",
+                "valor_stock", "margen_unitario", "fecha_recomendada",
+            ])
 
         hechos = self._hechos()
         inv_cfg = (self.cfg.inventario or {}) or {}

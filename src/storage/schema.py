@@ -292,4 +292,7 @@ VISTAS_ANALITICA: Dict[str, str] = {
 SQL_ARRANQUE = [
     'CREATE SCHEMA IF NOT EXISTS core;',
     'CREATE SCHEMA IF NOT EXISTS analitica;',
+    # Firma de la ultima carga: vive en el mismo fichero que las tablas para
+    # que, si se recrea la DB, la firma desaparezca con ella y se reconstruya.
+    'CREATE SCHEMA IF NOT EXISTS giro_meta;',
 ]

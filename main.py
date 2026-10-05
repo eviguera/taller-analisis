@@ -21,11 +21,13 @@ Uso:
 """
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
 
 from src.core.pipeline import procesar_etl, load_all
+from src.core.calidad import resumen as _resumen_calidad
 from src.core.catalog import escanear_directorio, clasificar_archivo
 from src.storage.schema import VISTAS_ANALITICA
 from src.data_loader import get_data_summary
@@ -90,7 +92,21 @@ def cmd_etl(args):
         print("\nEsquema core materializado con claves:")
         for tabla, filas in resultado.estructura.items():
             print(f"  - core.{tabla}: {_formato(filas)} filas")
-        print("  - vistas analiticas creadas en el almacen")
+        print(f"  - vistas analiticas creadas: {resultado.n_vistas}")
+    # Las advertencias (totales no parseables, vistas no creadas, conectores
+    # caidos) antes solo se veian en la UI: por CLI el ETL imprimia "OK".
+    if resultado.advertencias:
+        print("\nAdvertencias:")
+        for n, aviso in resultado.advertencias.items():
+            print(f"  - {n}: {aviso}")
+    if not resultado.calidad.empty:
+        res = _resumen_calidad(resultado.calidad)
+        print(f"\nCalidad de datos: {res['ok']}/{res['total']} reglas cumplen")
+        fallas = resultado.calidad[resultado.calidad["estado"] != "OK"]
+        for _, f in fallas.iterrows():
+            print(f"  - [{f['estado']}] {f['dataset']}.{f['campo']} "
+                  f"({f['dimension']}): {f['regla']} -> "
+                  f"{f['cumplen']}/{f['evaluadas']} ({f['tasa']*100:.0f}%)")
     if resultado.errores:
         print("\nErrores:")
         for n, e in resultado.errores.items():
@@ -537,6 +553,11 @@ def cmd_usuarios(args):
 
 
 def main():
+    # Los avisos de los modulos (vista no creada, totales no parseables,
+    # tablas huerfanas del warehouse) salen por logging y por CLI nadie los
+    # veia: WARNING a stderr. Nada de INFO, que traeria el SQL de sqlalchemy.
+    logging.basicConfig(level=logging.WARNING,
+                        format="%(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="GIRO - Inteligencia de negocio")
     subparsers = parser.add_subparsers(dest="comando", required=True)
 

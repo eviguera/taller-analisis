@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from ui import components as c
-from ui.context import obtener_estado
+from ui.context import en_kiosco, exigir_escritura, obtener_estado
 from src.alerts import evaluar_alertas, resumen_alertas, generar_reporte_alertas, enviar_email
 
 COLOR = {"critica": "rojo", "media": "amarillo", "baja": "azul"}
@@ -19,7 +19,7 @@ def principal():
         icono=":material/notifications_active:",
     )
 
-    alertas = evaluar_alertas(cfg, data)
+    alertas = evaluar_alertas(cfg, data, analyzer=analyzer, predictor=predictor)
     res = resumen_alertas(alertas)
 
     c.kpi_grid([
@@ -32,13 +32,12 @@ def principal():
     if res["por_tipo"]:
         tipo_df = pd.DataFrame(list(res["por_tipo"].items()),
                                columns=["Regla", "Alertas"])
-        col1, col2 = st.columns([1, 2], vertical_alignment="center")
-        with col1:
-            with c.panel("Alertas por regla", "Que se esta disparando"):
-                c.mostrar_grafico(c.grafico_barras(
-                    tipo_df, "Regla", "Alertas", color_cont="Reds",
-                    etiquetas={"Regla": "Regla", "Alertas": "Alertas"},
-                ), width="stretch", height="stretch")
+        # Sin columns: el panel era la unica columna y col2 quedaba en blanco.
+        with c.panel("Alertas por regla", "Que se esta disparando"):
+            c.mostrar_grafico(c.grafico_barras(
+                tipo_df, "Regla", "Alertas", color_cont="Reds",
+                etiquetas={"Regla": "Regla", "Alertas": "Alertas"},
+            ), width="stretch", height="stretch")
 
     st.markdown("## Detalle de alertas")
     if not alertas:
@@ -54,7 +53,8 @@ def principal():
     st.markdown("### Reporte y notificacion")
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
-        if st.button("Generar reporte HTML", icon=":material/description:"):
+        if st.button("Generar reporte HTML", icon=":material/description:",
+                     disabled=en_kiosco()):
             ruta = generar_reporte_alertas(cfg, data, alertas)
             st.success(f"Reporte generado en `{ruta.name}`")
             with open(ruta, "rb") as fh:
@@ -64,7 +64,10 @@ def principal():
                     icon=":material/download:",
                 )
     with col2:
-        if st.button("Enviar por email", icon=":material/send:"):
+        if en_kiosco():
+            st.caption("Modo presentacion: el envio se hace fuera del kiosco.")
+        if st.button("Enviar por email", icon=":material/send:", disabled=en_kiosco()):
+            exigir_escritura("Solo un administrador puede enviar alertas por email.")
             envio = enviar_email(
                 cfg,
                 f"[GIRO] Alertas de {cfg.negocio_nombre}",

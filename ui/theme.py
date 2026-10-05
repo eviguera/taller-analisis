@@ -6,6 +6,8 @@ sobre el tema base de Streamlit, manteniendo la identidad del cliente en
 demo, piloto y despliegue.
 """
 
+import html
+
 import streamlit as st
 
 DEFAULT_TEMA = {
@@ -104,11 +106,18 @@ def _css_premium(oscuridad: bool) -> str:
 
 
 def logo_html(texto_logo: str, slogan: str = "") -> str:
-    """Cabecera de marca para el sidebar."""
+    """Cabecera de marca para el sidebar.
+
+    El texto viene del config del workspace (editable por el tenant), asi que
+    se escapa: sin esto un ``texto_logo`` con ``<img onerror=...>`` se ejecuta
+    en el navegador de todos los usuarios de esa empresa.
+    """
+    texto = html.escape(str(texto_logo or ""))
+    sub = html.escape(str(slogan or ""))
     return (
         '<div class="giro-brand">'
-        f"{texto_logo}"
-        + (f"<br><small>{slogan}</small>" if slogan else "")
+        f"{texto}"
+        + (f"<br><small>{sub}</small>" if sub else "")
         + "</div>"
     )
 

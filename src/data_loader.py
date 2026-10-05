@@ -91,11 +91,57 @@ def load_inventario(path: Optional[Path] = None):
     return _cargar_tabla("inventario", path)
 
 
+# Esquema que devuelve ``enriquecer_facturas``: hechos de origen, las
+# dimensiones de cliente y vehiculo del join, y las columnas derivadas de
+# tiempo. Analyzer, Predictor y las paginas seleccionan columnas por nombre,
+# asi que este listado es el contrato.
+COLUMNAS_HECHOS = [
+    "id", "cliente_id", "vehiculo_id", "fecha", "total", "descuento",
+    "estado", "detalles",
+    "id_cliente", "nombre", "telefono", "email", "fecha_registro",
+    "id_vehiculo", "marca", "modelo", "anio", "placa", "color", "kilometraje",
+    "antiguedad_cliente_dias", "mes", "trimestre", "dia_semana", "anio_mes",
+]
+_HECHOS_FECHAS = ("fecha", "fecha_registro")
+_HECHOS_DECIMALES = ("total", "descuento")
+_HECHOS_NUMEROS = (
+    "id", "cliente_id", "vehiculo_id", "id_cliente", "id_vehiculo", "anio",
+    "kilometraje", "antiguedad_cliente_dias", "mes", "trimestre",
+)
+
+
+def hechos_vacios() -> pd.DataFrame:
+    """El esquema de ``enriquecer_facturas`` con cero filas.
+
+    Un workspace recien creado no tiene facturas todavia. Devolver un
+    ``DataFrame()`` sin columnas hacia que ``Analyzer`` y ``Predictor``
+    fallaran con un ``KeyError: 'estado'``, y ``obtener_estado`` presentaba
+    ese error al usuario como "No se pudieron cargar los datos" en lugar de
+    los estados vacios que las paginas ya saben pintar.
+
+    Los tipos se declaran uno a uno: un ``[]`` a secas se guarda como
+    ``float64`` y el acceso ``.str`` de pandas (``detalles``) lo rechaza.
+    """
+    vacio = pd.DataFrame()
+    for columna in COLUMNAS_HECHOS:
+        if columna in _HECHOS_FECHAS:
+            vacio[columna] = pd.Series(dtype="datetime64[ns]")
+        elif columna in _HECHOS_DECIMALES:
+            vacio[columna] = pd.Series(dtype="float64")
+        elif columna in _HECHOS_NUMEROS:
+            vacio[columna] = pd.Series(dtype="int64")
+        else:
+            vacio[columna] = pd.Series(dtype="string")
+    return vacio
+
+
 def enriquecer_facturas(data):
     """Enriquece facturas con dimensiones de clientes y vehiculos (left join)."""
     facturas = data["facturas"].copy() if "facturas" in data else pd.DataFrame()
     if facturas.empty:
-        return pd.DataFrame()
+        # Sin filas no hay nada que unir: se devuelve el esquema completo,
+        # no un frame vacio sin columnas (ver hechos_vacios).
+        return hechos_vacios()
 
     clientes = data.get("clientes", pd.DataFrame())
     vehiculos = data.get("vehiculos", pd.DataFrame())

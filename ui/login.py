@@ -27,11 +27,13 @@ _ICONO = ":material/lock:"
 
 
 def _titulo() -> None:
+    # Sin hex fijo: el color hereda el del tema y la opacidad lo suaviza,
+    # asi el subtitulo contrasta igual en claro y en oscuro.
     st.markdown(
         f"<div style='text-align:center;padding:1.5rem 0 .5rem'>"
         f"<div style='font-size:2.6rem'>{_ICONO}</div>"
         f"<h2 style='margin:.4rem 0 0'>Acceso a GIRO</h2>"
-        f"<p style='color:#64748B;margin:.2rem 0 0'>"
+        f"<p style='color:inherit;opacity:.7;margin:.2rem 0 0'>"
         f"Inteligencia de negocio para tu empresa</p></div>",
         unsafe_allow_html=True,
     )
@@ -139,9 +141,22 @@ def pantalla_login() -> None:
 
 
 def aviso_kiosco() -> None:
-    """Banner de solo lectura del modo presentacion."""
+    """Banner de solo lectura del modo presentacion.
+
+    Se muestra siempre que hay kiosco activo, sea quien sea la sesion. Antes
+    se pedia ``visitante and not hay_sesion`` y el aviso desaparecia justo
+    cuando entraba un usuario: con el demo ``GIRO_DEMO_USER``, con SSO o con
+    la auth apagada el banner no salia nunca.
+    """
     s = context.sesion()
-    if s.visitante and not s.hay_sesion:
+    if s.es_admin:
+        st.info(
+            "**Modo presentacion** · viendo GIRO como lo veria un cliente: "
+            "sin panel de administracion y sin escritura. Sal del modo para "
+            "volver a tu sesion completa.",
+            icon=":material/present_to_all:",
+        )
+    else:
         st.info(
             "**Modo presentacion** · vista de solo lectura. Los indicadores son "
             "de datos de ejemplo y no se puede modificar nada.",

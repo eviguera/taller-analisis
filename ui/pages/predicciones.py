@@ -141,19 +141,25 @@ def principal():
                              "Reglas de rotacion y cobertura por producto",
                              icono=":material/inventory_2:")
             inv_pred = predictor.predecir_inventario()
-            st.dataframe(
-                inv_pred[["producto", "categoria", "stock_actual", "stock_minimo",
-                          "demanda_mensual", "meses_cobertura", "cantidad_recomendada",
-                          "recomendacion", "valor_stock", "margen_unitario"]],
-                width="stretch", height=380,
-                column_config={
-                    "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
-                    "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
-                    "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
-                    "valor_stock": st.column_config.NumberColumn("Valor stock", format=c.formato_moneda(cfg.moneda)),
-                    "margen_unitario": st.column_config.NumberColumn("Margen unit.", format=c.formato_moneda(cfg.moneda)),
-                },
-            )
+            if inv_pred.empty:
+                c.vacio("No hay inventario que reposicionar.",
+                        icono=":material/inventory_2:",
+                        detalle="Carga el dataset de inventario en 'Mis datos' "
+                                "y el modelo calcula la reposicion sugerida.")
+            else:
+                st.dataframe(
+                    inv_pred[["producto", "categoria", "stock_actual", "stock_minimo",
+                              "demanda_mensual", "meses_cobertura", "cantidad_recomendada",
+                              "recomendacion", "valor_stock", "margen_unitario"]],
+                    width="stretch", height=380,
+                    column_config={
+                        "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
+                        "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
+                        "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
+                        "valor_stock": st.column_config.NumberColumn("Valor stock", format=c.formato_moneda(cfg.moneda)),
+                        "margen_unitario": st.column_config.NumberColumn("Margen unit.", format=c.formato_moneda(cfg.moneda)),
+                    },
+                )
 
 
 if __name__ == "__main__":

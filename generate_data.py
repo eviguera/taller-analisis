@@ -1,6 +1,8 @@
 import csv
+import os
 import random
 from datetime import datetime, timedelta
+from pathlib import Path
 
 random.seed(42)
 
@@ -188,9 +190,25 @@ def write_csv(filename, headers, rows):
         w.writerows(rows)
     print(f"  {filename} - {len(rows)} registros")
 
-if __name__ == "__main__":
-    import os
-    data_dir = os.path.join(os.path.dirname(__file__), "data")
+def main(workspace: str | None = None) -> Path:
+    """Genera los datasets de ejemplo y devuelve el directorio escrito.
+
+    ``workspace`` es la clave de la empresa: los archivos van al directorio de
+    datos de ESA empresa (la clave la valida ``src.workspaces``). Sin
+    workspace, a la raiz ``data/`` de la instalacion local, que es lo que
+    quiere la CLI.
+
+    Antes toda la generacion vivia bajo ``if __name__ == "__main__":`` y
+    escribia siempre en ``data/`` de la raiz: el boton del wizard importaba
+    un ``main`` inexistente (ImportError garantizado) y, si se "arreglaba" el
+    import, habria escrito en el almacen de la instancia en vez del workspace
+    que mostro la pantalla.
+    """
+    if workspace:
+        from src.workspaces import config_workspace
+        data_dir = str(config_workspace(workspace).directorio_datos)
+    else:
+        data_dir = os.path.join(os.path.dirname(__file__), "data")
     os.makedirs(data_dir, exist_ok=True)
 
     print("Generando datos de ejemplo...")
@@ -258,3 +276,12 @@ if __name__ == "__main__":
         print(f"  Advertencia: no se exporto .sav - {e}")
 
     print("\nDatos generados exitosamente!")
+    return Path(data_dir)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Genera los datos de ejemplo de GIRO.")
+    parser.add_argument("--workspace", default=None,
+                        help="Clave del workspace. Si falta, escribe en data/ de la raiz.")
+    main(parser.parse_args().workspace)

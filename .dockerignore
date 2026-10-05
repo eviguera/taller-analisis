@@ -60,3 +60,6 @@ tests
 *.egg-info
 .idea
 .vscode
+
+# Repositorios de referencia clonados
+referencias/

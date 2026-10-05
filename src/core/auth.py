@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,20 @@ PERMISO_GESTIONAR_EMPRESAS = "gestionar_empresas"
 PERMISO_CONECTORES = "conectores"
 PERMISO_PUBLICAR_WAREHOUSE = "publicar_warehouse"
 PERMISO_VER_TODAS_EMPRESAS = "ver_todas_empresas"
+
+# Un ``cliente`` no hereda nada por defecto: los permisos de arriba se
+# conceden por usuario en ``config/usuarios.yaml``::
+
+#     - username: carmen
+#       permisos: [publicar_warehouse, ver_todas_empresas]
+#
+# ``admin`` y el modo desarrollo los tienen todos sin figurar. Fuera de esta
+# lista lo que se pida se descarga al leer el registro (una errata no puede
+# dejar a nadie sin entrar ni abrir una puerta inesperada).
+PERMISOS_VALIDOS = frozenset({
+    PERMISO_CONSOLA_SQL, PERMISO_GESTIONAR_EMPRESAS, PERMISO_CONECTORES,
+    PERMISO_PUBLICAR_WAREHOUSE, PERMISO_VER_TODAS_EMPRESAS,
+})
 
 _PERMISOS_CLIENTE = frozenset()
 
@@ -192,6 +207,8 @@ class Usuario:
     rol: str = ROL_CLIENTE
     # Workspaces a los que tiene acceso. Vacio = todos (solo admin).
     workspaces: List[str] = field(default_factory=list)
+    # Permisos puntuales concedidos a esta cuenta (ver PERMISOS_VALIDOS).
+    permisos: List[str] = field(default_factory=list)
     activo: bool = True
     email: str = ""
 
@@ -201,6 +218,12 @@ class Usuario:
         if self.rol not in ROLES_VALIDOS:
             raise ValueError(f"Rol desconocido: {self.rol!r}. Usa {ROLES_VALIDOS}.")
         self.workspaces = sorted({validar_clave(w) for w in (self.workspaces or [])})
+        pedidos = [str(p).strip() for p in (self.permisos or [])]
+        ignorados = sorted({p for p in pedidos if p and p not in PERMISOS_VALIDOS})
+        if ignorados:
+            log.warning("Permisos desconocidos en %s (ignorados): %s",
+                        self.username, ", ".join(ignorados))
+        self.permisos = sorted({p for p in pedidos if p in PERMISOS_VALIDOS})
 
     @property
     def es_admin(self) -> bool:
@@ -212,7 +235,8 @@ class Usuario:
 
     def es_dict_sensible(self) -> dict:
         return {"username": self.username, "nombre": self.nombre, "rol": self.rol,
-                "workspaces": self.workspaces, "activo": self.activo}
+                "workspaces": self.workspaces, "permisos": self.permisos,
+                "activo": self.activo}
 
 
 @dataclass
@@ -249,17 +273,19 @@ class Sesion:
     def acceso_total(self) -> bool:
         """La sesion no esta acotada a una lista de empresas.
 
-        Solo development (autenticacion apagada) y ``admin``. Para todos los
-        demas la lista manda, y si esta vacia no hay acceso a ninguna empresa.
+        ``admin`` y el modo desarrollo, o quien tenga concedido el permiso
+        explicito ``ver_todas_empresas``. Para todos los demas la lista manda,
+        y si esta vacia no hay acceso a ninguna empresa.
         """
-        return self.modo_abierto or self.es_admin
+        return self.es_admin or self.puede(PERMISO_VER_TODAS_EMPRESAS)
 
     def puede(self, permiso: str) -> bool:
         if self.modo_abierto or self.es_admin:
             return True
         if not self.hay_sesion:
             return False
-        return permiso in _PERMISOS_CLIENTE
+        # Concesiones puntuales de la cuenta (usuarios.yaml -> permisos).
+        return permiso in _PERMISOS_CLIENTE or permiso in (self.usuario.permisos or ())
 
     def workspaces_permitidos(self) -> List[str]:
         """Claves asignadas a la sesion.
@@ -313,6 +339,7 @@ def cargar_registro() -> Dict[str, Usuario]:
                 hash=hash_guardado,
                 rol=entrada.get("rol") or ROL_CLIENTE,
                 workspaces=list(entrada.get("workspaces") or []),
+                permisos=list(entrada.get("permisos") or []),
                 activo=bool(entrada.get("activo", True)),
                 email=entrada.get("email") or "",
             )
@@ -335,6 +362,7 @@ def guardar_registro(usuarios: Dict[str, Usuario]) -> None:
                 "email": u.email,
                 "rol": u.rol,
                 "workspaces": u.workspaces,
+                "permisos": u.permisos,
                 "activo": u.activo,
                 "hash": u.hash,
             }
@@ -418,14 +446,19 @@ def autenticar(username: str, password: str) -> Tuple[Optional[Usuario], Optiona
     if not verificar_hash(password, usuario.hash):
         return None, "Usuario o contraseña incorrectos."
     if _hash_obsoleto(usuario.hash):
-        usuario.hash = hashear(password)
-        try:
-            guardar_registro(cargar_registro())
-        except OSError as e:
-            # El hash viejo quedara sin migrar en disco: no es fatal para la
-            # sesion actual, pero hay que dejar constancia.
-            log.warning("No se pudo persistir la migracion del hash de %s: %s",
-                        usuario.username, e)
+        # Hay que mutar el registro releido, no el objeto de esta llamada:
+        # guardar_registro(cargar_registro()) rele el disco y volveria a
+        # volcar el hash viejo, dejando la migracion sin efecto.
+        registro = cargar_registro()
+        if usuario.username in registro:
+            registro[usuario.username].hash = hashear(password)
+            try:
+                guardar_registro(registro)
+            except OSError as e:
+                # El hash viejo quedara sin migrar en disco: no es fatal para la
+                # sesion actual, pero hay que dejar constancia.
+                log.warning("No se pudo persistir la migracion del hash de %s: %s",
+                            usuario.username, e)
     return usuario, None
 
 
@@ -463,10 +496,38 @@ def limpiar_intentos(username: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _escucha_solo_loopback() -> bool:
+    """True solo si el servidor esta realmente limitado a loopback.
+
+    La direccion efectiva puede venir de tres sitios (flag
+    ``--server.address``, ``[server] address`` en config.toml o la variable de
+    entorno); mirar solo ``STREAMLIT_SERVER_ADDRESS`` dejaba ``GIRO_AUTH=0``
+    desactivando la autenticacion aunque la app escuchara en 0.0.0.0. Ante la
+    duda (config ilegible), se responde False: la autenticacion sigue puesta.
+    """
     address = os.environ.get("STREAMLIT_SERVER_ADDRESS", "").strip()
     if not address:
+        # Flag CLI (--server.address 0.0.0.0, el caso de entrypoint.sh):
+        # se lee de argv porque st.config no siempre lo refleja en runtime.
+        argv = sys.argv[1:]
+        for i, arg in enumerate(argv):
+            if arg == "--server.address" and i + 1 < len(argv):
+                address = argv[i + 1].strip()
+                break
+            if arg.startswith("--server.address="):
+                address = arg.split("=", 1)[1].strip()
+                break
+    if not address:
+        try:
+            import streamlit as st
+            address = str(st.config.get_option("server.address") or "").strip()
+        except Exception:  # noqa: BLE001  # sin runtime de Streamlit: duda = expuesta
+            return False
+    if not address:
         return True  # Streamlit solo escucha en loopback si no se define ADDRESS.
-    return address in ("127.0.0.1", "localhost", "::1")
+    if address in ("127.0.0.1", "localhost", "::1"):
+        return True
+    # 0.0.0.0 o una IP concreta: la app esta expuesta a la red.
+    return False
 
 
 def _flag(nombre: str, defecto: str = "0") -> bool:
@@ -510,7 +571,11 @@ def _usuario_demo() -> Optional[Usuario]:
     if usuario is None or not usuario.activo:
         return None
     return Usuario(username=usuario.username, nombre=usuario.nombre,
-                   hash="", rol=ROL_CLIENTE, workspaces=list(usuario.workspaces))
+                   hash="", rol=ROL_CLIENTE, workspaces=list(usuario.workspaces),
+                   # El kiosco es de solo lectura por diseno: el rol ya se
+                   # rebaja a cliente y las concesiones puntuales no se
+                   # heredan, ni aunque el operador apunte a una cuenta admin.
+                   permisos=[])
 
 
 def tiene_consola_oidc() -> bool:
@@ -528,9 +593,12 @@ def inicio_de_sesion(token: Optional[str], modo_kiosco: bool = False) -> Sesion:
         return Sesion(modo_abierto=True)
 
     # 1) Identidad federada: gana sobre el registro local si esta configurada.
+    #    st.user.is_logged_in solo existe cuando hay un proveedor OIDC en
+    #    secrets; leerlo sin esa seccion lanza AttributeError en cada rerun,
+    #    lo que colaba un warning de "identidad federada" por peticion.
     try:
         import streamlit as st
-        if st.user.is_logged_in:
+        if tiene_consola_oidc() and st.user.is_logged_in:
             claims = {"email": st.user.email or "", "nombre": st.user.name or ""}
             return _sesion_por_claims(claims)
     except Exception as e:  # noqa: BLE001
@@ -598,7 +666,8 @@ def _sesion_por_claims(claims: dict) -> Sesion:
     if registrado is not None and registrado.activo:
         return Sesion(usuario=Usuario(
             username=ident, nombre=nombre or registrado.nombre or ident,
-            hash="", rol=ROL_CLIENTE, workspaces=registrado.workspaces))
+            hash="", rol=ROL_CLIENTE, workspaces=registrado.workspaces,
+            permisos=registrado.permisos))
     return Sesion(usuario=Usuario(username=ident, nombre=nombre or ident,
                                   hash="", rol=ROL_CLIENTE, workspaces=[]))
 
@@ -649,6 +718,7 @@ def workspaces_visibles(sesion: Sesion) -> List[str]:
 __all__ = [
     "ROL_ADMIN", "ROL_CLIENTE", "PERMISO_CONSOLA_SQL", "PERMISO_GESTIONAR_EMPRESAS",
     "PERMISO_CONECTORES", "PERMISO_PUBLICAR_WAREHOUSE", "PERMISO_VER_TODAS_EMPRESAS",
+    "PERMISOS_VALIDOS",
     "NOMBRE_COOKIE", "PATRON_CLAVE", "PERSISTIR_URL", "PARAM_URL",
     "Usuario", "Sesion", "autenticar", "auth_activada", "inicio_de_sesion",
     "emitir_cookie", "workspace_permitido", "workspaces_visibles",

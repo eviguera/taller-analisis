@@ -8,11 +8,13 @@ import streamlit as st
 
 from src.core.catalog import escanear_directorio, clasificar_archivo, vincular_archivos_a_datasets
 from src.core import auth
+from src.core.conector_sql import mensaje_error
 from src.loaders import get_loader
 from src.loaders.pspp_loader import exportar_sav
 
 from ui import components as c
-from ui.context import cargar_datos, obtener_config, obtener_estado, sesion
+from ui.context import cargar_datos, exigir, obtener_config, obtener_estado, sesion
+from src.core.calidad import resumen as resumen_calidad
 
 EJEMPLOS_SQL = {
     "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
@@ -25,6 +27,35 @@ EJEMPLOS_SQL = {
 def _aplicar_ejemplo_sql():
     etiqueta = st.session_state.get("sql_ejemplo_lbl")
     st.session_state["sql_consulta"] = EJEMPLOS_SQL.get(etiqueta, "")
+
+
+def _mostrar_calidad(calidad) -> None:
+    """Bloque de calidad de datos tras un ETL (reglas por campo).
+
+    Patron plano de gchq-data-quality: un resumen con cuantas reglas cumplen
+    y, si algo falla, la tabla con las reglas que no pasan y su tasa. Nada
+    de esconder los falles detras de un "OK".
+    """
+    if calidad is None or calidad.empty:
+        return
+    res = resumen_calidad(calidad)
+    fallas = calidad[calidad["estado"] != "OK"]
+    if fallas.empty:
+        st.caption(f":material/verified: Calidad de datos: **{res['ok']}** reglas "
+                   "sobre los datasets cargados, todas cumplen.")
+        return
+    st.warning(
+        f":material/rule: Calidad de datos: **{res['revisar'] + res['error']}** de "
+        f"**{res['total']}** reglas no se cumplen.")
+    st.dataframe(
+        fallas, width="stretch", hide_index=True,
+        column_config={
+            "evaluadas": st.column_config.NumberColumn("Evaluadas"),
+            "cumplen": st.column_config.NumberColumn("Cumplen"),
+            "tasa": st.column_config.NumberColumn("Tasa", format="percent"),
+            "estado": st.column_config.TextColumn("Estado"),
+        },
+    )
 
 
 def _pestana(tab):
@@ -99,7 +130,10 @@ def principal():
                     destino_dir.mkdir(parents=True, exist_ok=True)
                     guardados = 0
                     for up in subidos:
-                        (destino_dir / up.name).write_bytes(up.getbuffer())
+                        # .name descarta cualquier ruta que traiga el nombre
+                        # subido ("../../x"): el archivo tiene que caer dentro
+                        # del directorio del workspace y de ningun otro sitio.
+                        (destino_dir / Path(up.name).name).write_bytes(up.getbuffer())
                         guardados += 1
                     st.success(f"{guardados} archivo(s) guardados en {destino_dir}")
 
@@ -167,6 +201,7 @@ def principal():
                                        f"**{resultado.n_vistas}** vistas en `analitica`.")
                         for nombre, adv in resultado.advertencias.items():
                             st.warning(f":material/warning: **{nombre}**: {adv}")
+                        _mostrar_calidad(resultado.calidad)
                     else:
                         estado.update(label="ETL termino con errores", state="error", expanded=True)
                         st.error("El ETL termino con errores:")
@@ -512,6 +547,11 @@ de la pestana *Procesar (ETL)*.
             with wh_c1:
                 if st.button("Publicar en el warehouse", type="primary",
                              icon=":material/cloud_upload:", disabled=not wh_dsn.strip()):
+                    # El permiso se comprueba en la accion, no solo con
+                    # ocultar la pestana (PERMISO_PUBLICAR_WAREHOUSE existia
+                    # y nadie lo comprobaba).
+                    exigir(auth.PERMISO_PUBLICAR_WAREHOUSE,
+                           "Solo un administrador puede publicar en el warehouse.")
                     with st.status("Publicando...", expanded=False) as wh_estado:
                         try:
                             publicados = _wh_sync(cfg, wh_dsn.strip())
@@ -520,7 +560,9 @@ de la pestana *Procesar (ETL)*.
                             st.dataframe(pd.DataFrame(publicados), width="stretch")
                         except Exception as e:  # noqa: BLE001
                             wh_estado.update(label="Fallo la publicacion", state="error")
-                            st.error(f"No se pudo publicar: {e}")
+                            # mensaje_error enmascara el DSN: una excepcion de
+                            # SQLAlchemy/psycopg2 puede traer user:pass.
+                            st.error(f"No se pudo publicar: {mensaje_error(e)}")
             with wh_c2:
                 if st.button("Ver tablas publicadas", icon=":material/database_search:",
                              disabled=not wh_dsn.strip()):
@@ -531,7 +573,7 @@ de la pestana *Procesar (ETL)*.
                         else:
                             st.dataframe(df_wh, width="stretch")
                     except Exception as e:  # noqa: BLE001
-                        st.error(f"No se pudo ver las tablas: {e}")
+                        st.error(f"No se pudo ver las tablas: {mensaje_error(e)}")
 
     # ---------------------------------------------------------------
     #  PESTAÑA: CONSULTAS SQL
@@ -591,16 +633,18 @@ def _wizard_primer_uso():
             "los datos de tu negocio."
         )
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown("**1. Sube tus archivos**")
-            st.markdown("CSV, Excel o PSPP con tus facturas, clientes y servicios.")
-        with col2:
-            st.markdown("**2. Procesa el ETL**")
-            st.markdown("GIRO normaliza los datos y crea las vistas analíticas.")
-        with col3:
-            st.markdown("**3. Explora el dashboard**")
-            st.markdown("KPIs, predicciones y recomendaciones listos para usar.")
+        # Apilado y no columns: en el sidebar (donde se renderiza) tres
+        # columnas quedan a ~90px y el texto se parte palabra por palabra.
+        for titulo, detalle in [
+            ("1. Sube tus archivos",
+             "CSV, Excel o PSPP con tus facturas, clientes y servicios."),
+            ("2. Procesa el ETL",
+             "GIRO normaliza los datos y crea las vistas analíticas."),
+            ("3. Explora el dashboard",
+             "KPIs, predicciones y recomendaciones listos para usar."),
+        ]:
+            st.markdown(f"**{titulo}**")
+            st.caption(detalle)
 
         st.markdown("---")
         st.markdown(
@@ -608,38 +652,32 @@ def _wizard_primer_uso():
             "genera datos de ejemplo para probar."
         )
 
-        col1, col2, col3 = st.columns([1, 1, 0.8])
-        with col1:
-            if st.button("Ir a Mis datos", type="primary",
-                         icon=":material/arrow_forward:", width="stretch",
-                         key="wizard_ir_datos"):
-                # No se marca completado aqui: si el usuario se pierde sin
-                # importar nada, el wizard debe volver a aparecer.
-                st.switch_page("ui/pages/datos.py")
-        with col2:
-            if st.button("Generar datos de ejemplo",
-                         icon=":material/auto_awesome:", width="stretch",
-                         key="wizard_generar_ejemplo"):
-                from generate_data import main as generar
-                import sys
+        # Apilados igual que los pasos: en el sidebar tres botones a ~90px
+        # no permiten leer la etiqueta.
+        if st.button("Ir a Mis datos", type="primary",
+                     icon=":material/arrow_forward:", width="stretch",
+                     key="wizard_ir_datos"):
+            # No se marca completado aqui: si el usuario se pierde sin
+            # importar nada, el wizard debe volver a aparecer.
+            st.switch_page("ui/pages/datos.py")
+        if st.button("Generar datos de ejemplo",
+                     icon=":material/auto_awesome:", width="stretch",
+                     key="wizard_generar_ejemplo"):
+            from generate_data import main as generar_ejemplos
 
-                # Capturar el output para no ensuciar la consola
-                old_argv = sys.argv
-                sys.argv = ["generate_data", "--workspace", cfg.clave]
-                try:
-                    generar()
-                    st.success("Datos de ejemplo generados. Recarga la pagina.")
-                    st.rerun()
-                except Exception as e:  # noqa: BLE001
-                    st.error(f"No se pudo generar datos de ejemplo: {e}")
-                finally:
-                    sys.argv = old_argv
-        with col3:
-            if st.button("Lo haré después",
-                         icon=":material/later:", width="stretch",
-                         key="wizard_despues"):
-                st.session_state["_onboarding_completado"] = True
+            # Los archivos van al directorio de datos del workspace
+            # activo, no al data/ de la raiz (regla 1: aislamiento).
+            try:
+                destino = generar_ejemplos(cfg.clave)
+                st.success(f"Datos de ejemplo generados en `{destino}`. Recarga la pagina.")
                 st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"No se pudo generar datos de ejemplo: {e}")
+        if st.button("Lo haré después",
+                     icon=":material/later:", width="stretch",
+                     key="wizard_despues"):
+            st.session_state["_onboarding_completado"] = True
+            st.rerun()
 
 
 if __name__ == "__main__":
