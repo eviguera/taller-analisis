@@ -20,6 +20,7 @@ import pandas as pd
 
 from ..core import conector_sql
 from ..puertos import PuertoAlmacen
+from .carga import derivados_almacen
 
 #: Vistas que salen en la exportacion analitica a PSPP/SPSS.
 VISTAS_PARA_EXPORTAR = [
@@ -35,6 +36,17 @@ VISTAS_PARA_EXPORTAR = [
     "inventario_estado",
     "facturas_con_dimensiones",
 ]
+
+#: Ejemplos de la consola SQL: una sola sentencia SELECT cada uno, sobre
+#: el esquema canonico. Viven aqui porque son parte del contrato del
+#: almacen (que tablas existen y como se llaman), no el copy de una
+#: pantalla: la API y el CLI pueden ofrecerlos igual que la UI.
+EJEMPLOS_SQL = {
+    "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
+    "Top clientes por gasto": "SELECT nombre, SUM(total) AS gasto FROM facturas GROUP BY nombre ORDER BY gasto DESC LIMIT 10",
+    "Vehiculos por marca": "SELECT marca, COUNT(*) AS vehiculos FROM vehiculos GROUP BY marca ORDER BY vehiculos DESC",
+    "Facturas por estado": "SELECT estado, SUM(total) AS monto, COUNT(*) AS facturas FROM facturas GROUP BY estado",
+}
 
 
 # ------------------------------------------------------------------
@@ -59,10 +71,9 @@ def firma_fuentes(cfg) -> str:
     try:
         base = Path(cfg.directorio_datos)
         # El propio almacen vive aqui (almacen.duckdb y su .wal): cada
-        # escritura en la BD cambiaria su mtime y la firma se invalidaria a
-        # si misma en bucle, registrando siempre.
-        db = Path(cfg.db_path).name
-        excluidos = {db, f"{db}.wal", f"{db}.tmp"}
+        # escritura en la BD cambiaria su mtime y la firma se invalidaria
+        # a si misma en bucle, registrando siempre.
+        excluidos = derivados_almacen(cfg)
         for ruta in sorted(base.iterdir()):
             # Solo ficheros originales: los directorios (p. ej. data/cache,
             # que esta DENTRO de directorio_datos) cambian de mtime al
@@ -231,8 +242,24 @@ def resumen_calidad(data) -> dict:
     return get_data_summary(data)
 
 
+def resumen_reglas(calidad) -> Tuple[dict, pd.DataFrame]:
+    """Conteo de reglas por estado y subconjunto que no las cumple.
+
+    Devuelve ``(resumen, fallas)``: la UI pinta el resumen y la tabla de
+    las reglas que no pasan, pero el conteo y el filtro son del nucleo
+    para que la pantalla, la CLI y la API reporten exactamente lo mismo.
+    Un ``calidad`` vacio (o ``None``) devuelve ceros y tabla vacia.
+    """
+    from ..core.calidad import resumen  # noqa: PLC0415 — core, sin adaptadores
+
+    if calidad is None or calidad.empty:
+        return resumen(calidad), pd.DataFrame()
+    return resumen(calidad), calidad[calidad["estado"] != "OK"]
+
+
 __all__ = [
     "VISTAS_PARA_EXPORTAR",
+    "EJEMPLOS_SQL",
     "firma_fuentes",
     "firma_datos",
     "sincronizar_almacen",
@@ -243,4 +270,5 @@ __all__ = [
     "vista",
     "exportar_analitica_pspp",
     "resumen_calidad",
+    "resumen_reglas",
 ]

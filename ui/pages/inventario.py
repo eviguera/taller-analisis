@@ -76,7 +76,7 @@ def principal():
                         stock_total=("stock_actual", "sum"),
                         valor=("valor_inventario", "sum"),
                     ).sort_values("valor", ascending=False).reset_index()
-                    st.dataframe(cat, width="stretch", column_config={
+                    c.dataframe(cat, column_config={
                         "categoria": st.column_config.TextColumn("Categoria"),
                         "productos": st.column_config.NumberColumn("Productos"),
                         "stock_total": st.column_config.NumberColumn("Unidades en stock"),
@@ -107,10 +107,9 @@ def principal():
                 st.warning(f"Hay {c.miles(len(faltan))} productos que requieren pedido inmediato.",
                            icon=":material/priority_high:")
                 with c.panel("Detalle del pedido", "Unidades a pedir de cada producto"):
-                    st.dataframe(
+                    c.dataframe(
                         faltan[["producto", "categoria", "stock_actual", "stock_minimo",
                                 "demanda_mensual", "meses_cobertura", "cantidad_recomendada"]],
-                        width="stretch",
                         column_config={
                             "producto": st.column_config.TextColumn("Producto"),
                             "categoria": st.column_config.TextColumn("Categoria"),
@@ -136,10 +135,10 @@ def principal():
 
     with tab_tabla:
         if tab_tabla.open:
-            st.dataframe(
+            c.dataframe(
                 inv[["producto", "categoria", "precio_costo", "precio_venta", "stock_actual",
                      "stock_minimo", "margen_pct", "estado_stock", "valor_inventario"]],
-                width="stretch", height=380, column_config=columnas_tabla,
+                alto=380, column_config=columnas_tabla,
             )
 
 

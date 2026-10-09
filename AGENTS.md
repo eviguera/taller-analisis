@@ -12,7 +12,7 @@ Este archivo se carga siempre. Los agentes especializados viven en `.opencode/ag
 | **Puertos** | `src/puertos/` — `PuertoAlmacen`, `PuertoRegistroModelos`, `PuertoCarga`: las interfaces del hexágono |
 | **Casos de uso** | `src/aplicacion/` — `almacen.py` (firma, sincronizar, estructura, vista, consulta). **Sin `streamlit`, sin `duckdb`, sin `fastapi`** — hay test que lo garantiza |
 | Núcleo / ETL | `src/core/` — `pipeline.py`, `hechos.py`, `conector_sql.py`, `warehouse.py`, `auth.py`, `config.py`, `templates.py` |
-| Almacenamiento | `src/storage/` — `store.py` (DataStore/DuckDB), `postgres.py` (AlmacenPostgres), `dialecto.py` (SQL de cada motor), `schema.py` (vistas analíticas) |
+| Almacenamiento | `src/storage/` — `store.py` (DataStore/DuckDB), `postgres.py` (`AlmacenPostgres` + `asegurar_base_workspace`: crea la base por workspace), `dialecto.py` (SQL de cada motor), `schema.py` (vistas analíticas) |
 | API HTTP | `src/api/` — `app.py` (`crear_app`), `rutas.py`, `deps.py` (sesión/permisos), `esquemas.py` |
 | Carga | `src/loaders/` — `base.py` + csv / excel / parquet / pspp, `factory.py` |
 | Analítica | `src/analyzer.py`, `predictions.py`, `model_registry.py`, `recomendaciones.py`, `alerts.py`, `simulador.py`, `negocio.py` |
@@ -40,6 +40,7 @@ Datos de ejemplo: taller mecánico (50 clientes, 88 vehículos, 40 servicios, 35
 **Comandos:**
 ```bash
 .venv/bin/python main.py --help
+GIRO_ALMACEN_MOTOR=postgres .venv/bin/python main.py workspace init-db   # crea/repara las bases de Postgres por workspace
 .venv/bin/streamlit run dashboard.py   # :8501
 .venv/bin/streamlit run landing.py     # :8502
 uvicorn --factory src.api.app:crear_app --port 8503   # API
@@ -53,6 +54,7 @@ docker compose up -d --build
 2. **Nada de secretos en el código.** Solo `os.environ`. Nunca en el código, el `Dockerfile`, el `docker-compose.yml` ni los logs. El contenedor corre en `0.0.0.0`, así que la app **exige** autenticación y `GIRO_AUTH_SECRET`.
 3. **Sin datos de tenants en la imagen ni en el repo.** `.dockerignore` excluye `data/`, `workspaces/`, `reports/`, `*.duckdb`, `*.parquet`, `*.joblib`, `config/usuarios.yaml`. Ese contrato no se rompe.
 4. **SQL siempre parametrizado.** Bind parameters, nunca f-strings ni concatenación. Los identificadores dinámicos (nombre de tabla/columna) se validan contra una allowlist.
+   **Única excepción documentada:** el `CREATE DATABASE` de `asegurar_base_workspace()` (`src/storage/postgres.py`) no admite bind en PostgreSQL; el identificador sale exclusivamente de `dbname_postgres()`, que sanea la clave (`[a-z0-9_]`) y valida los 63 bytes. No parametrizarlo más, no generalizarlo.
 5. **Sin deserializar datos externos con `pickle`/`joblib`** sin validar el origen: es RCE. Aplica a `src/model_registry.py`.
 6. **Python 3.11** (lo fija `Dockerfile`). El venv local puede ser más nuevo; no uses APIs que no existan en 3.11.
 7. **Cero efectos secundarios a nivel de import.** Nada de `st.set_page_config`, `duckdb.connect()` ni lectura de disco en import.

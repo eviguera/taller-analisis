@@ -17,15 +17,18 @@ Puertos:
   * `PuertoAlmacen`        -> persistencia analitica (DuckDB, Postgres, ...)
   * `PuertoRegistroModelos` -> modelos entrenados entre sesiones
   * `PuertoCarga`          -> lectura de archivos fuente (CSV, Excel, PSPP)
+  * `PuertoIdentidad`      -> identidad federada (SSO/OIDC) de la peticion
 """
 
 from .almacen import PuertoAlmacen
 from .carga import CargaResultado, PuertoCarga
+from .identidad import PuertoIdentidad
 from .modelos import PuertoRegistroModelos
 
 __all__ = [
     "PuertoAlmacen",
     "PuertoRegistroModelos",
     "PuertoCarga",
+    "PuertoIdentidad",
     "CargaResultado",
 ]

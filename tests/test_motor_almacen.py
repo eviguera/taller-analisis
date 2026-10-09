@@ -114,5 +114,36 @@ class TestAislamientoPorWorkspace(unittest.TestCase):
         self.assertTrue(re.fullmatch(r"[a-z0-9_]{1,63}", nombre))
 
 
+class TestMensajeDeErrorDePostgres(unittest.TestCase):
+    """El error de get_store tiene que decirle al operador como reparar."""
+
+    @staticmethod
+    def _fallo(motivo: str):
+        import psycopg2
+        return psycopg2.OperationalError(motivo)
+
+    def _get_store_con_fallo(self, motivo: str) -> str:
+        with mock.patch.dict(os.environ, {"GIRO_ALMACEN_MOTOR": "postgres"}), \
+                mock.patch("src.storage.postgres.AlmacenPostgres",
+                           side_effect=self._fallo(motivo)):
+            with self.assertRaises(RuntimeError) as ctx:
+                get_store(_cfg("demo"))
+        return str(ctx.exception)
+
+    def test_si_la_base_no_existe_lo_dice_y_apunta_a_init_db(self):
+        mensaje = self._get_store_con_fallo(
+            'connection to server at "127.0.0.1", port 55432 failed: '
+            'FATAL:  database "giro_demo" does not exist')
+        self.assertIn("no existe", mensaje)
+        self.assertIn("workspace init-db", mensaje)
+
+    def test_cualquier_otro_fallo_sigue_sugiriendo_init_db_y_las_giro_pg(self):
+        # El motivo original no se traga: se ve junto a la reparacion.
+        mensaje = self._get_store_con_fallo("password authentication failed")
+        self.assertIn("password authentication failed", mensaje)
+        self.assertIn("workspace init-db", mensaje)
+        self.assertIn("GIRO_PG_", mensaje)
+
+
 if __name__ == "__main__":
     unittest.main()

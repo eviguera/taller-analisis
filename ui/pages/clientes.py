@@ -66,9 +66,9 @@ def principal():
                     ), width="stretch", height="stretch")
 
             with c.panel("Detalle RFM", "Cliente, recencia, visitas, gasto y segmento"):
-                st.dataframe(
+                c.dataframe(
                     rfm[["nombre", "recencia_dias", "frecuencia", "monto", "rfm_score", "segmento"]],
-                    width="stretch", height=320,
+                    alto=320,
                     column_config={
                         "nombre": "Cliente",
                         "recencia_dias": st.column_config.NumberColumn("Recencia (dias)"),
@@ -100,8 +100,8 @@ def principal():
                     top, "nombre", "total_gastado", color="facturas", color_cont="Blues",
                     etiquetas={"nombre": "Cliente", "total_gastado": "Gasto total"},
                 ), width="stretch", height="stretch")
-                st.dataframe(
-                    top, width="stretch", height=320,
+                c.dataframe(
+                    top, alto=320,
                     column_config={
                         "cliente_id": "ID cliente",
                         "nombre": "Cliente",
@@ -120,8 +120,8 @@ def principal():
                     frec.head(15), "nombre", "facturas", color_cont="Purples",
                     etiquetas={"nombre": "Cliente", "facturas": "Visitas"},
                 ), width="stretch", height="stretch")
-                st.dataframe(
-                    frec, width="stretch", height=320,
+                c.dataframe(
+                    frec, alto=320,
                     column_config={
                         "nombre": "Cliente",
                         "facturas": st.column_config.NumberColumn("Visitas"),
@@ -137,8 +137,8 @@ def principal():
                 with c.panel("Clientes sugeridos para contacto",
                              "Acciones recomendadas por recencia de visita",
                              icono=":material/campaign:"):
-                    st.dataframe(
-                        sugerencias, width="stretch", height=300,
+                    c.dataframe(
+                        sugerencias, alto=300,
                         column_config={
                             "cliente": "Cliente",
                             "dias_sin_visita": st.column_config.NumberColumn("Dias sin visita"),

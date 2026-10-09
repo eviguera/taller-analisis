@@ -115,6 +115,22 @@ def _paginas_por_rol(sesion, kiosco: bool):
     return PAGINAS
 
 
+def _salto_al_contenido() -> None:
+    """Enlace de salto al contenido principal (WCAG 2.4.1).
+
+    El ``<main>`` de Streamlit (``data-testid="stMain"``) no expone un
+    ``id`` al que apuntar, asi que el ancla se inyecta aqui, antes de que
+    ``pg.run()`` emita la pagina. El skip-link es el primer elemento
+    enfocable del area principal y se ve solo con foco de teclado (el
+    estilo ``.skip-link`` vive en ``ui/theme.py``).
+    """
+    st.markdown(
+        '<a class="skip-link" href="#contenido">Saltar al contenido</a>'
+        '<a id="contenido" tabindex="-1"></a>',
+        unsafe_allow_html=True,
+    )
+
+
 def _navegar(cfg_head, kiosco: bool):
     """Barra de navegacion + pagina activa + pie."""
     paginas_visibles = _paginas_por_rol(context.sesion(), kiosco)
@@ -123,6 +139,7 @@ def _navegar(cfg_head, kiosco: bool):
         for etiqueta, clave, icono, modulo, principal in paginas_visibles
     ]
     tema_mod.aplicar(cfg_head.tema)
+    _salto_al_contenido()
 
     with st.sidebar:
         # En modo normal el logo ya lo emitio _sidebar_completa; aqui solo

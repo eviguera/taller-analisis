@@ -11,8 +11,11 @@ Capas, de la mas fuerte a la mas debil:
 
 1. ``GIRO_AUTH=0`` desactiva la autenticacion por completo. Pensado solo para
    desarrollo local; solo tiene efecto si la app escucha en loopback.
-2. Identidad real con ``st.user`` cuando hay un proveedor OIDC configurado
-   (``st.secrets["auth"]``). Es la via recomendada en despliegues gestionados.
+2. Identidad federada (OIDC) cuando la entrada registra un proveedor en el
+   puerto ``PuertoIdentidad`` (seccion ``[auth]`` de ``secrets.toml``; en la
+   UI lo adapta ``ui.login``). Es la via recomendada en despliegues
+   gestionados. Sin proveedor registrado no hay via federada: API y CLI se
+   quedan con el registro local.
 3. Registro local de usuarios con cookie firmada, para instalaciones on-prem
    sin proveedor de identidad.
 
@@ -39,6 +42,7 @@ import os
 import secrets
 import sys
 import time
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -47,6 +51,7 @@ import yaml
 
 log = logging.getLogger("taller.auth")
 
+from ..puertos.identidad import PuertoIdentidad
 from ..workspaces import CLAVE_PRINCIPAL, PATRON_CLAVE, listar_workspaces, validar_clave
 
 # ---------------------------------------------------------------------------
@@ -495,19 +500,69 @@ def limpiar_intentos(username: str) -> None:
 #  Politicas de exposicion
 # ---------------------------------------------------------------------------
 
+def _rutas_config_streamlit() -> List[Path]:
+    """Ficheros de config de Streamlit, en orden de prioridad (el ultimo gana).
+
+    Misma cascada que usa Streamlit: ``STREAMLIT_CONFIG_FILE`` si el operador
+    lo define, y por defecto el ``config.toml`` global (``~/.streamlit/``) al
+    que sobreescribe el del directorio de trabajo (``./.streamlit/``).
+    """
+    forzado = os.environ.get("STREAMLIT_CONFIG_FILE", "").strip()
+    if forzado:
+        return [Path(forzado)]
+    return [Path.home() / ".streamlit" / "config.toml",
+            Path.cwd() / ".streamlit" / "config.toml"]
+
+
+def _direccion_en_config() -> Optional[str]:
+    """``server.address`` efectivo de los ``config.toml``, sin pasar por Streamlit.
+
+    Devuelve ``""`` cuando la clave no esta (el default de Streamlit es
+    escuchar solo en loopback) y ``None`` cuando NO se pudo determinar: TOML
+    mal formado, fichero ilegible o address de un tipo inesperado. El ``None``
+    lo trata el llamador como "expuesta": ante la duda la autenticacion
+    sigue puesta.
+    """
+    direccion = ""
+    for ruta in _rutas_config_streamlit():
+        if not ruta.exists():
+            continue
+        try:
+            datos = tomllib.loads(ruta.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            # Solo tipo y ruta: el contenido de la config no interesa aqui.
+            log.warning("Config de Streamlit ilegible en %s (%s)", ruta,
+                        type(e).__name__)
+            return None
+        servidor = datos.get("server")
+        if not isinstance(servidor, dict) or "address" not in servidor:
+            continue
+        valor = servidor["address"]
+        if not isinstance(valor, str):
+            return None
+        direccion = valor.strip()
+    return direccion
+
+
 def _escucha_solo_loopback() -> bool:
     """True solo si el servidor esta realmente limitado a loopback.
 
     La direccion efectiva puede venir de tres sitios (flag
     ``--server.address``, ``[server] address`` en config.toml o la variable de
     entorno); mirar solo ``STREAMLIT_SERVER_ADDRESS`` dejaba ``GIRO_AUTH=0``
-    desactivando la autenticacion aunque la app escuchara en 0.0.0.0. Ante la
-    duda (config ilegible), se responde False: la autenticacion sigue puesta.
+    desactivando la autenticacion aunque la app escuchara en 0.0.0.0. La
+    cadena completa, de mayor a menor prioridad, es: env -> argv ->
+    config.toml -> default de Streamlit (loopback). El config.toml se lee
+    directamente con ``tomllib``: esto es una politica de seguridad del
+    nucleo, no un asunto de la UI, y por eso funciona igual con o sin
+    streamlit instalado. Ante la duda (config ilegible o de tipo
+    inesperado), se responde False: la autenticacion sigue puesta.
     """
     address = os.environ.get("STREAMLIT_SERVER_ADDRESS", "").strip()
     if not address:
         # Flag CLI (--server.address 0.0.0.0, el caso de entrypoint.sh):
-        # se lee de argv porque st.config no siempre lo refleja en runtime.
+        # se lee de argv porque el proceso no siempre arranca como
+        # `streamlit run` y el flag no siempre esta reflejado en runtime.
         argv = sys.argv[1:]
         for i, arg in enumerate(argv):
             if arg == "--server.address" and i + 1 < len(argv):
@@ -517,11 +572,10 @@ def _escucha_solo_loopback() -> bool:
                 address = arg.split("=", 1)[1].strip()
                 break
     if not address:
-        try:
-            import streamlit as st
-            address = str(st.config.get_option("server.address") or "").strip()
-        except Exception:  # noqa: BLE001  # sin runtime de Streamlit: duda = expuesta
-            return False
+        en_config = _direccion_en_config()
+        if en_config is None:
+            return False  # sin determinacion: duda = expuesta
+        address = en_config
     if not address:
         return True  # Streamlit solo escucha en loopback si no se define ADDRESS.
     if address in ("127.0.0.1", "localhost", "::1"):
@@ -578,13 +632,59 @@ def _usuario_demo() -> Optional[Usuario]:
                    permisos=[])
 
 
+def _rutas_secrets() -> List[Path]:
+    """Ficheros de secretos de Streamlit, en orden de prioridad.
+
+    ``STREAMLIT_SECRETS_FILE`` manda si el operador lo define; si no, la misma
+    cascada que usa Streamlit: ``./.streamlit/secrets.toml`` del directorio de
+    trabajo y ``~/.streamlit/secrets.toml`` global.
+    """
+    forzado = os.environ.get("STREAMLIT_SECRETS_FILE", "").strip()
+    if forzado:
+        return [Path(forzado)]
+    return [Path.cwd() / ".streamlit" / "secrets.toml",
+            Path.home() / ".streamlit" / "secrets.toml"]
+
+
 def tiene_consola_oidc() -> bool:
-    """True si hay un proveedor OIDC configurado en st.secrets."""
-    try:
-        import streamlit as st
-        return bool(dict(st.secrets.get("auth") or {}))
-    except Exception:  # noqa: BLE001  # st.secrets lanza si no hay secrets.toml
-        return False
+    """True si hay un proveedor OIDC configurado (seccion ``[auth]`` de secrets.toml).
+
+    Lee los mismos ficheros que Streamlit, pero con ``tomllib``: el nucleo no
+    depende de la UI para decidirlo. Sin fichero o sin seccion ``[auth]`` no
+    hay consola. El contenido NUNCA se imprime ni se loguea: de todo lo que
+    hay en el fichero solo se mira si la seccion existe y no esta vacia.
+    """
+    for ruta in _rutas_secrets():
+        try:
+            datos = tomllib.loads(ruta.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue  # Sin secrets.toml es el caso normal, no un error.
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            # Ante un fichero que no se puede leer no se asume OIDC. Solo se
+            # registra tipo y ruta: jamas el contenido de un fichero de secretos.
+            log.warning("Secrets de Streamlit ilegibles en %s (%s); sin consola OIDC",
+                        ruta, type(e).__name__)
+            return False
+        seccion = datos.get("auth")
+        if isinstance(seccion, dict) and seccion:
+            return True  # El directorio de trabajo manda sobre el global.
+    return False
+
+
+# ---------------------------------------------------------------------------
+#  Identidad federada (puerto: src/puertos/identidad.py)
+# ---------------------------------------------------------------------------
+
+#: Adaptador del ``PuertoIdentidad``. La UI de Streamlit lo fija al importar
+#: ``ui.login``; la API HTTP y el CLI no registran ninguno y, sin proveedor,
+#: no hay via OIDC: el nucleo no sabe nada de ``st.user``.
+_proveedor_identidad: Optional[PuertoIdentidad] = None
+
+
+def fijar_proveedor_identidad(proveedor: Optional[PuertoIdentidad]) -> None:
+    """Registra el adaptador de identidad federada (``None`` lo retira)."""
+    global _proveedor_identidad
+    _proveedor_identidad = proveedor
 
 
 def inicio_de_sesion(token: Optional[str], modo_kiosco: bool = False) -> Sesion:
@@ -593,19 +693,21 @@ def inicio_de_sesion(token: Optional[str], modo_kiosco: bool = False) -> Sesion:
         return Sesion(modo_abierto=True)
 
     # 1) Identidad federada: gana sobre el registro local si esta configurada.
-    #    st.user.is_logged_in solo existe cuando hay un proveedor OIDC en
-    #    secrets; leerlo sin esa seccion lanza AttributeError en cada rerun,
-    #    lo que colaba un warning de "identidad federada" por peticion.
-    try:
-        import streamlit as st
-        if tiene_consola_oidc() and st.user.is_logged_in:
-            claims = {"email": st.user.email or "", "nombre": st.user.name or ""}
-            return _sesion_por_claims(claims)
-    except Exception as e:  # noqa: BLE001
-        # Si la federacion falla, se cae al registro local: un fallo silencioso
-        # aqui dejaria al usuario sin saber por que su SSO no entra.
-        log.warning("Identidad federada no disponible (%s); se usa el registro local",
-                    type(e).__name__)
+    #    Sin proveedor registrado no hay OIDC (API y CLI), y sin seccion
+    #    ``[auth]`` el proveedor de la UI devolveria None en cada rerun en
+    #    vez de colar un AttributeError por peticion. Si la federacion falla,
+    #    se cae al registro local.
+    proveedor = _proveedor_identidad
+    if proveedor is not None and tiene_consola_oidc():
+        try:
+            identidad = proveedor.identidad_ui()
+            if identidad:
+                return _sesion_por_claims(identidad)
+        except Exception as e:  # noqa: BLE001
+            # Si la federacion falla, se cae al registro local: un fallo silencioso
+            # aqui dejaria al usuario sin saber por que su SSO no entra.
+            log.warning("Identidad federada no disponible (%s); se usa el registro local",
+                        type(e).__name__)
 
     # 2) Kiosco: visitante de solo lectura, nunca con permisos de escritura.
     if modo_kiosco:
@@ -721,7 +823,8 @@ __all__ = [
     "PERMISOS_VALIDOS",
     "NOMBRE_COOKIE", "PATRON_CLAVE", "PERSISTIR_URL", "PARAM_URL",
     "Usuario", "Sesion", "autenticar", "auth_activada", "inicio_de_sesion",
-    "emitir_cookie", "workspace_permitido", "workspaces_visibles",
+    "fijar_proveedor_identidad", "emitir_cookie", "workspace_permitido",
+    "workspaces_visibles",
     "crear_usuario", "actualizar_password", "cargar_registro", "guardar_registro",
     "ruta_registro", "buscar_usuario", "tiene_consola_oidc", "hash_a_envejecer",
     "verificar_hash", "hashear", "firmar", "verificar",

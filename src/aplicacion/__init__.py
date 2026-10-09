@@ -2,7 +2,7 @@
 
 Capa de aplicacion del hexagono: orquesta el dominio y los puertos sin
 saber de que adaptador habla. Los adaptadores de entrada (Streamlit en
-`ui/`, la API, el CLI) llaman aqui; los de salida (`src/storage`,
+`ui/`, la API, la CLI) llaman aqui; los de salida (`src/storage`,
 `src/loaders`, `src/model_registry`) son los que el nucleo invoca a traves
 de `src/puertos`.
 
@@ -11,6 +11,7 @@ quedado atado a un adaptador concreto y deja de poder servir a otro.
 """
 
 from .almacen import (
+    EJEMPLOS_SQL,
     VISTAS_PARA_EXPORTAR,
     abrir_almacen,
     consulta_sql,
@@ -19,12 +20,28 @@ from .almacen import (
     firma_datos,
     firma_fuentes,
     resumen_calidad,
+    resumen_reglas,
     sincronizar_almacen,
     validar_sql_solo_lectura,
     vista,
 )
+from .carga import (
+    CUOTA_WORKSPACE_BYTES,
+    FORMATOS_PSPP,
+    LIMITE_SUBIDA_BYTES,
+    derivados_almacen,
+    directorio_datos_permitido,
+    ejecutar_etl,
+    exportar_datasets_sav,
+    filas_conectores,
+    filas_detectadas,
+    guardar_subidas,
+    leer_archivos_pspp,
+    mismo_contenido,
+)
 
 __all__ = [
+    "EJEMPLOS_SQL",
     "VISTAS_PARA_EXPORTAR",
     "abrir_almacen",
     "consulta_sql",
@@ -33,7 +50,20 @@ __all__ = [
     "firma_datos",
     "firma_fuentes",
     "resumen_calidad",
+    "resumen_reglas",
     "sincronizar_almacen",
     "validar_sql_solo_lectura",
     "vista",
+    "CUOTA_WORKSPACE_BYTES",
+    "FORMATOS_PSPP",
+    "LIMITE_SUBIDA_BYTES",
+    "derivados_almacen",
+    "directorio_datos_permitido",
+    "ejecutar_etl",
+    "exportar_datasets_sav",
+    "filas_conectores",
+    "filas_detectadas",
+    "guardar_subidas",
+    "leer_archivos_pspp",
+    "mismo_contenido",
 ]

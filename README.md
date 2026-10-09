@@ -169,15 +169,26 @@ unset GIRO_ALMACEN_MOTOR
 # Opt-in: Postgres (una base de datos POR workspace, equivalente al .duckdb).
 export GIRO_ALMACEN_MOTOR=postgres
 export GIRO_PG_HOST=127.0.0.1 GIRO_PG_PORT=5432
-export GIRO_PG_USER=giro     GIRO_PG_PASSWORD=...
+export GIRO_PG_USER=giro     GIRO_PG_PASSWORD=...   # solo entorno, nunca código
+export GIRO_PG_DBNAME=postgres   # base de administración (crea/repara bases)
 export GIRO_PG_DBPREFIX=giro # el workspace "demo" vive en giro_demo
 ```
 
-Cada workspace necesita su base creada una vez (`giro_<clave>`) — es la
-unidad de aislamiento: si dos workspaces compartieran base, el ETL de uno
-(`DROP TABLE` + `CREATE`) borraría las tablas del otro. Ningún código de
-negocio sabe qué motor hay detrás: pide un `PuertoAlmacen` y `get_store()`
-en `src/data_loader.py` lo resuelve.
+Cada workspace tiene **su propia base** (`giro_<clave>`; `principal` →
+`giro_principal`, guiones → `_`, máx. 63 caracteres) — es la unidad de
+aislamiento: si dos workspaces compartieran base, el ETL de uno
+(`DROP TABLE` + `CREATE`) borraría las tablas del otro. Créalas todas de una
+vez (o repara el desfase tras `workspace crear`):
+
+```bash
+python main.py workspace init-db   # <clave>: creada | ya existia | ERROR (exit 1 si algo falla)
+```
+
+`python main.py workspace crear <clave>` crea también la base del workspace
+nuevo. Si el usuario no tiene `CREATEDB`, el aviso imprime el
+`CREATE DATABASE "giro_<clave>";` exacto que debe ejecutar el operador.
+Ningún código de negocio sabe qué motor hay detrás: pide un `PuertoAlmacen`
+y `get_store()` en `src/data_loader.py` lo resuelve.
 
 ### 2. Linea de comandos
 
@@ -209,6 +220,7 @@ python main.py workspace crear taller-don-juan --nombre "Taller Don Juan" --mone
 python main.py workspace crear clinica-norte --sector clinica --muestra   # plantilla vertical
 python main.py workspace listar
 python main.py workspace config taller-don-juan
+python main.py workspace init-db   # con Postgres: crea/repara la base de cada workspace
 
 # Conectores ERP/SQL (Fase 2)
 python main.py conector seed-erp --usar      # snapshot SQLite demo + conectores en config

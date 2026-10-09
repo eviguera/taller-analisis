@@ -79,10 +79,10 @@ def principal():
                              "Se ordena por riesgo de perder al cliente (55%), valor (30%) "
                              "e inactividad (15%)",
                              icono=":material/task_alt:"):
-                    st.dataframe(
+                    c.dataframe(
                         acciones[["nombre", "accion", "canal", "mensaje", "prioridad",
                                   "prob_churn", "monto", "recencia_dias", "servicio_sugerido"]],
-                        width="stretch", height=420,
+                        alto=420,
                         column_config={
                             "nombre": st.column_config.TextColumn("Cliente"),
                             "accion": st.column_config.TextColumn("Accion"),
@@ -130,11 +130,11 @@ def principal():
                 with c.panel("Proximo servicio por vehiculo",
                              "Segun intervalo de mantenimiento y ultimo servicio realizado",
                              icono=":material/build:"):
-                    st.dataframe(
+                    c.dataframe(
                         progs[["cliente", "marca", "modelo", "placa", "anio", "kilometraje",
                                "dias_sin_visita", "servicio_sugerido", "nota",
                                "meses_estimados", "intervalo_meses", "prioridad"]],
-                        width="stretch", height=400,
+                        alto=400,
                         column_config={
                             "cliente": st.column_config.TextColumn("Cliente"),
                             "marca": st.column_config.TextColumn("Marca"),
@@ -173,9 +173,8 @@ def principal():
                         "Metricas": _resumen_metricas(m.get("evaluacion"), cfg.moneda),
                         "Guardado": bool(m.get("existe_modelo", False)),
                     })
-                st.dataframe(
+                c.dataframe(
                     pd.DataFrame(filas),
-                    width="stretch",
                     column_config={"Guardado": st.column_config.CheckboxColumn("Guardado")},
                 )
             else:

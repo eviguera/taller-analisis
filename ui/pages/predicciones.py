@@ -79,7 +79,7 @@ def principal():
                 col1, col2 = st.columns(2, vertical_alignment="center")
                 with col1:
                     with c.panel("Proyeccion", "Ingresos estimados a futuro"):
-                        st.dataframe(res["predicciones"], width="stretch", column_config={
+                        c.dataframe(res["predicciones"], column_config={
                             "fecha": st.column_config.TextColumn("Mes"),
                             "ingresos_predichos": st.column_config.NumberColumn(
                                 "Ingresos proyectados", format=c.formato_moneda(cfg.moneda)),
@@ -92,8 +92,8 @@ def principal():
                         })
                 with col2:
                     with c.panel("Historico (ultimos 12)", "Ingresos observados recientes"):
-                        st.dataframe(hist[["Periodo", "Valor"]].tail(12), width="stretch",
-                                     column_config={
+                        c.dataframe(hist[["Periodo", "Valor"]].tail(12),
+                                    column_config={
                                          "Periodo": st.column_config.TextColumn("Mes"),
                                          "Valor": st.column_config.NumberColumn(
                                              "Ingresos", format=c.formato_moneda(cfg.moneda)),
@@ -121,7 +121,7 @@ def principal():
                     ), width="stretch", height="stretch")
                 c.titulo_seccion("Tendencias detectadas",
                                  "Cuanto sube o baja la demanda de cada servicio cada mes")
-                st.dataframe(dem["tendencias"], width="stretch", column_config={
+                c.dataframe(dem["tendencias"], column_config={
                     "servicio": st.column_config.TextColumn("Servicio"),
                     "tendencia": st.column_config.NumberColumn(
                         "Cambio al mes", format="%.1f",
@@ -130,7 +130,8 @@ def principal():
                 with st.expander("Ver tabla completa de demanda", icon=":material/table_chart:"):
                     tabla = pred_df.pivot_table(index="fecha", columns="servicio",
                                                 values="demanda_predicha", aggfunc="sum")
-                    st.dataframe(tabla.style.format("{:.1f}"), width="stretch")
+                    # El indice (fechas) es la etiqueta de fila: no se oculta.
+                    c.dataframe(tabla.style.format("{:.1f}"), indice_visible=True)
 
     with tab_churn:
         if tab_churn.open:
@@ -192,13 +193,13 @@ def principal():
                     ), width="stretch", height="stretch")
                 c.titulo_seccion("Ranking completo",
                                  f"{c.miles(len(resultados))} clientes ordenados por probabilidad")
-                st.dataframe(
+                c.dataframe(
                     resultados[["nombre", "recencia", "frecuencia", "monto", "churn", "prob_churn"]],
-                    width="stretch", height=340,
+                    alto=340,
                     column_config=config_clientes,
                 )
             else:
-                st.dataframe(resultados, width="stretch", column_config=config_clientes)
+                c.dataframe(resultados, column_config=config_clientes)
 
     with tab_inv:
         if tab_inv.open:
@@ -213,11 +214,11 @@ def principal():
                         detalle="Carga el dataset de inventario en 'Mis datos' "
                                 "y el modelo calcula la reposicion sugerida.")
             else:
-                st.dataframe(
+                c.dataframe(
                     inv_pred[["producto", "categoria", "stock_actual", "stock_minimo",
                               "demanda_mensual", "meses_cobertura", "cantidad_recomendada",
                               "recomendacion", "valor_stock", "margen_unitario"]],
-                    width="stretch", height=380,
+                    alto=380,
                     column_config={
                         "producto": st.column_config.TextColumn("Producto"),
                         "categoria": st.column_config.TextColumn("Categoria"),

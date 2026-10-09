@@ -6,32 +6,15 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.core.catalog import escanear_directorio, clasificar_archivo, vincular_archivos_a_datasets
+from src import aplicacion
+from src.aplicacion import CUOTA_WORKSPACE_BYTES, EJEMPLOS_SQL, LIMITE_SUBIDA_BYTES
 from src.core import auth
+from src.core.catalog import escanear_directorio, vincular_archivos_a_datasets
 from src.core.conector_sql import mensaje_error
-from src.loaders import get_loader
-from src.loaders.pspp_loader import exportar_sav
 
 from ui import components as c
 from ui.context import (cargar_datos, exigir, exigir_escritura, obtener_config,
                         obtener_estado, sesion)
-from src.core.calidad import resumen as resumen_calidad
-
-# Cuota por archivo en la subida: corta un fichero gigante. Va de la mano
-# con server.maxUploadSize (200 MB por defecto), asi que por si sola no
-# frena nada que el servidor no rechace ya.
-LIMITE_SUBIDA_BYTES = 200 * 1024 * 1024
-# Cuota acumulada del workspace: sin ella, N ficheros pequenos o subidas
-# repetidas llenarian el disco del contenedor, que todos los tenants
-# comparten. Es la que de verdad protege el disco compartido.
-CUOTA_WORKSPACE_BYTES = 1024 * 1024 * 1024
-
-EJEMPLOS_SQL = {
-    "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
-    "Top clientes por gasto": "SELECT nombre, SUM(total) AS gasto FROM facturas GROUP BY nombre ORDER BY gasto DESC LIMIT 10",
-    "Vehiculos por marca": "SELECT marca, COUNT(*) AS vehiculos FROM vehiculos GROUP BY marca ORDER BY vehiculos DESC",
-    "Facturas por estado": "SELECT estado, SUM(total) AS monto, COUNT(*) AS facturas FROM facturas GROUP BY estado",
-}
 
 
 def _aplicar_ejemplo_sql():
@@ -44,12 +27,11 @@ def _mostrar_calidad(calidad) -> None:
 
     Patron plano de gchq-data-quality: un resumen con cuantas reglas cumplen
     y, si algo falla, la tabla con las reglas que no pasan y su tasa. Nada
-    de esconder los falles detras de un "OK".
+    de esconder los falles tras un "OK".
     """
-    if calidad is None or calidad.empty:
+    res, fallas = aplicacion.resumen_reglas(calidad)
+    if res["total"] == 0:
         return
-    res = resumen_calidad(calidad)
-    fallas = calidad[calidad["estado"] != "OK"]
     if fallas.empty:
         st.caption(f":material/verified: Calidad de datos: **{res['ok']}** reglas "
                    "sobre los datasets cargados, todas cumplen.")
@@ -73,62 +55,21 @@ def _pestana(tab):
     return tab if tab is not None else contextlib.nullcontext()
 
 
-def _mismo_contenido(ruta: Path, contenido) -> bool:
-    """True si el fichero en disco ya es byte a byte el contenido subido.
-
-    Se compara por bloques: cargar un fichero de 200 MB entero en RAM solo
-    para descartar una reescritura seria mas caro que el propio guardado.
-    """
-    bloque = 1 << 20
-    with open(ruta, "rb") as f:
-        for inicio in range(0, len(contenido), bloque):
-            if f.read(bloque) != bytes(contenido[inicio:inicio + bloque]):
-                return False
-        return f.read(1) == b""
-
-
 def _guardar_subidas(subidos, destino_dir: Path, excluidos=frozenset()):
-    """Guarda las subidas en el workspace, solo si su contenido cambio.
+    """Adapta el ``file_uploader`` al caso de uso y delega la escritura.
 
-    El ``file_uploader`` conserva los ficheros mientras la pestana esta
-    abierta y el bloque que lo envuelve se re-ejecuta en cada rerun:
-    reescribirlos a ciegas movia el mtime de los originales, la firma de
-    ``cargar_datos`` cambiaba siempre y la cache se invalidaba a si misma
-    en bucle, recargando todo justo en la pantalla de importacion.
+    Solo traduce: ``(name, size, getbuffer())`` a la tupla
+    ``(nombre, tamano, contenido)`` que espera ``aplicacion.guardar_subidas``,
+    donde viven la deduplicacion, la cuota y el confinamiento del nombre.
+    Las cuotas se pasan como argumento porque esta pagina las cita en sus
+    avisos y el nucleo no debe depender de la UI para conocerlas.
 
     Devuelve ``(guardados, sin_cambios, por_archivo, por_cuota)``.
-    ``por_archivo`` corta un fichero mayor que el limite individual;
-    ``por_cuota`` frena el acumulado del directorio de datos del workspace
-    contra ``CUOTA_WORKSPACE_BYTES``. Los ficheros de ``excluidos`` (el
-    almacen DuckDB y su WAL) no cuentan en la cuota: son derivados, no los
-    sube nadie, y comerian la cuota del tenant sin motivo.
     """
-    destino_dir = Path(destino_dir)
-    destino_dir.mkdir(parents=True, exist_ok=True)
-    guardados = sin_cambios = por_archivo = por_cuota = 0
-    ocupado = sum(f.stat().st_size for f in destino_dir.iterdir()
-                  if f.is_file() and f.name not in excluidos)
-    for up in subidos:
-        tam = up.size or 0
-        if tam > LIMITE_SUBIDA_BYTES:
-            por_archivo += 1
-            continue
-        if ocupado + tam > CUOTA_WORKSPACE_BYTES:
-            por_cuota += 1
-            continue
-        # .name descarta cualquier ruta que traiga el nombre subido
-        # ("../../x"): el archivo tiene que caer dentro del directorio
-        # del workspace y de ningun otro sitio.
-        destino = destino_dir / Path(up.name).name
-        contenido = up.getbuffer()
-        if (destino.exists() and destino.stat().st_size == tam
-                and _mismo_contenido(destino, contenido)):
-            sin_cambios += 1
-            continue
-        destino.write_bytes(contenido)
-        ocupado += tam
-        guardados += 1
-    return guardados, sin_cambios, por_archivo, por_cuota
+    subidas = [(u.name, u.size, u.getbuffer()) for u in subidos]
+    return aplicacion.guardar_subidas(
+        subidas, destino_dir, excluidos=excluidos,
+        limite_bytes=LIMITE_SUBIDA_BYTES, cuota_bytes=CUOTA_WORKSPACE_BYTES)
 
 
 def _plural(n: int) -> str:
@@ -231,8 +172,7 @@ def principal():
                            "CSV, Excel (.xlsx), PSPP (.sav/.zsav/.por).")
 
             directorio = Path(data_dir)
-            permitido = Path(cfg.directorio_datos).resolve()
-            if not directorio.resolve().is_relative_to(permitido):
+            if not aplicacion.directorio_datos_permitido(cfg, directorio):
                 st.error("El directorio debe estar dentro del workspace actual.")
                 return
 
@@ -248,12 +188,10 @@ def principal():
                     exigir_escritura(
                         "Solo un administrador puede importar archivos en el workspace.")
                     destino_dir = Path(cfg.directorio_datos)
-                    # El almacen DuckDB y su WAL son derivados, no subidos:
-                    # no deben comerse la cuota del workspace.
-                    db = Path(cfg.db_path).name
                     with st.spinner("Guardando archivos en tu directorio de datos…"):
                         guardados, sin_cambios, por_archivo, por_cuota = _guardar_subidas(
-                            subidos, destino_dir, excluidos={db, f"{db}.wal", f"{db}.tmp"})
+                            subidos, destino_dir,
+                            excluidos=aplicacion.derivados_almacen(cfg))
                     if por_archivo:
                         st.warning(
                             f"Límite por archivo ({LIMITE_SUBIDA_BYTES // (1024 * 1024)} MB): "
@@ -276,15 +214,14 @@ def principal():
             archivos = escanear_directorio(directorio)
             if archivos:
                 filas = []
-                for a in archivos:
-                    dataset, score = (clasificar_archivo(a.ruta, a.formato) if a.dataset_estimado is None
-                                      else (a.dataset_estimado, None))
+                for fila in aplicacion.filas_detectadas(archivos):
                     filas.append({
-                        "Archivo": a.nombre,
-                        "Formato": c.formato_archivo(a.formato),
-                        "Tamano (KB)": a.tamaño_kb,
-                        "Dataset detectado": dataset or "?",
-                        "Confianza": score if score is None else f"{score:.0%}",
+                        "Archivo": fila["archivo"],
+                        "Formato": c.formato_archivo(fila["formato"]),
+                        "Tamano (KB)": fila["tamano_kb"],
+                        "Dataset detectado": fila["dataset"] or "?",
+                        "Confianza": (fila["confianza"] if fila["confianza"] is None
+                                      else f"{fila['confianza']:.0%}"),
                     })
                 st.dataframe(pd.DataFrame(filas), width="stretch", height=250, column_config={
                     "Tamano (KB)": st.column_config.NumberColumn("Tamano (KB)"),
@@ -368,24 +305,14 @@ def principal():
                          icon=":material/ios_share:",
                          help="Genera los .sav en el subdirectorio export de tus datos."):
                 out = Path(cfg.directorio_datos) / "export"
-                out.mkdir(parents=True, exist_ok=True)
-                exportados = 0
-                fallos = {}
                 with st.spinner("Exportando datasets a .sav…"):
-                    for nombre, df in data.items():
-                        if df.empty:
-                            continue
-                        try:
-                            exportar_sav(df, out / f"{nombre}.sav", label_archivo=f"{nombre} exportado")
-                            exportados += 1
-                        except Exception as e:  # noqa: BLE001
-                            fallos[nombre] = str(e)
+                    exportados, fallos = aplicacion.exportar_datasets_sav(data, out)
                 for nombre, err in fallos.items():
                     st.warning(f"{nombre}: no se pudo exportar ({err})")
                 if exportados:
                     st.success(
-                        f"{c.miles(exportados)} dataset{_plural(exportados)} "
-                        f"exportado{_plural(exportados)} a `{out}`.")
+                        f"{c.miles(len(exportados))} dataset{_plural(len(exportados))} "
+                        f"exportado{_plural(len(exportados))} a `{out}`.")
                 elif not fallos:
                     st.info("No hay datasets con datos que exportar.")
 
@@ -541,34 +468,31 @@ de la pestana *Procesar (ETL)*.
 4. En este sistema, procesa los datos (ETL) y listo.
                 """)
 
-            sav_archivos = [a for a in escanear_directorio(Path(cfg.directorio_datos))
-                            if a.formato in ("sav", "zsav", "por")]
-            if sav_archivos:
+            resumenes = aplicacion.leer_archivos_pspp(Path(cfg.directorio_datos))
+            if resumenes:
                 st.markdown("**Archivos PSPP detectados**")
-                for a in sav_archivos:
-                    try:
-                        loader = get_loader(a.ruta)
-                        res = loader.cargar(a.ruta)
-                        labels = res.metadatos.get("etiquetas_valores", {}) or {}
-                        st.markdown(
-                            f"- **{a.nombre}** ({a.formato.upper()}) · {c.miles(len(res.datos))} filas · "
-                            f"{len(res.datos.columns)} columnas · "
-                            f"{len(labels)} variables con etiquetas",
-                        )
-                        columnas = ", ".join(str(x) for x in res.datos.columns)
-                        st.caption(f"Columnas: `{columnas}`")
-                        col_pre, col_meta = st.columns([2, 1], vertical_alignment="center")
-                        with col_pre:
-                            st.dataframe(res.datos.head(3), width="stretch")
-                        with col_meta:
-                            if labels:
-                                filas_label = []
-                                for var, mapa in labels.items():
-                                    m = "; ".join(f"{k}={v}" for k, v in list(mapa.items())[:4])
-                                    filas_label.append({"Variable": var, "Etiquetas": m})
-                                st.dataframe(pd.DataFrame(filas_label), width="stretch", height=120)
-                    except Exception as e:  # noqa: BLE001
-                        st.warning(f"- **{a.nombre}**: error al leer ({e})")
+                for r in resumenes:
+                    if r["error"]:
+                        st.warning(f"- **{r['nombre']}**: error al leer ({r['error']})")
+                        continue
+                    datos = r["datos"]
+                    etiquetas = r["etiquetas"]
+                    st.markdown(
+                        f"- **{r['nombre']}** ({r['formato'].upper()}) · {c.miles(len(datos))} filas · "
+                        f"{len(datos.columns)} columnas · "
+                        f"{len(etiquetas)} variables con etiquetas",
+                    )
+                    st.caption(f"Columnas: `{', '.join(str(x) for x in datos.columns)}`")
+                    col_pre, col_meta = st.columns([2, 1], vertical_alignment="center")
+                    with col_pre:
+                        st.dataframe(datos.head(3), width="stretch")
+                    with col_meta:
+                        if etiquetas:
+                            filas_label = []
+                            for var, mapa in etiquetas.items():
+                                m = "; ".join(f"{k}={v}" for k, v in list(mapa.items())[:4])
+                                filas_label.append({"Variable": var, "Etiquetas": m})
+                            st.dataframe(pd.DataFrame(filas_label), width="stretch", height=120)
             else:
                 c.vacio(
                     "No hay archivos .sav, .zsav o .por en el directorio de datos.",
@@ -582,12 +506,9 @@ de la pestana *Procesar (ETL)*.
     # ---------------------------------------------------------------
     with _pestana(tab_conectores):
         if tab_conectores is not None and tab_conectores.open:
-            from pathlib import Path as _Path
-
             from src.core.conector_sql import (conectores_desde_snapshot,
                                                crear_snapshot_erp,
                                                escribir_conectores,
-                                               parsear_conectores,
                                                sincronizar_conectores)
 
             st.markdown("**Sincronizacion con origenes externos (ERP/SQL)**")
@@ -595,20 +516,12 @@ de la pestana *Procesar (ETL)*.
                        "SQLite, DuckDB, CSV/Excel (archivo o URL). Los conectores "
                        "se ejecutan con el ETL y con 'Sincronizar ahora'.")
 
-            configurados = parsear_conectores(cfg)
-            if configurados:
-                filas = []
-                for x in configurados:
-                    fuente = x.fuente
-                    if fuente and "://" not in str(fuente):
-                        existe = (_Path(cfg.directorio_datos) / str(fuente)).exists()
-                    else:
-                        existe = bool(fuente)
-                    filas.append({
-                        "Nombre": x.nombre, "Motor": x.motor, "Dataset": x.dataset,
-                        "Fuente": str(fuente or "(consulta)"), "Forzar": x.forzar,
-                        "Fuente presente": "OK" if existe else "NO",
-                    })
+            filas = [{
+                "Nombre": fila["nombre"], "Motor": fila["motor"], "Dataset": fila["dataset"],
+                "Fuente": fila["fuente"], "Forzar": fila["forzar"],
+                "Fuente presente": "OK" if fila["existe"] else "NO",
+            } for fila in aplicacion.filas_conectores(cfg)]
+            if filas:
                 st.dataframe(pd.DataFrame(filas), width="stretch")
 
                 if st.button("Sincronizar conectores ahora", type="primary",
@@ -639,7 +552,7 @@ de la pestana *Procesar (ETL)*.
             st.caption("Exporta tus datasets a un archivo SQLite (datos + metadatos "
                        "de la exportacion) y luego conecta los datasets a el.")
             col_ver, col_con = st.columns(2, vertical_alignment="bottom")
-            snapshot_ruta = _Path(cfg.directorio_datos) / "erp.sqlite"
+            snapshot_ruta = Path(cfg.directorio_datos) / "erp.sqlite"
             with col_ver:
                 if st.button("1. Crear snapshot ERP (erp.sqlite)",
                              icon=":material/database_upload:"):
@@ -769,7 +682,7 @@ de la pestana *Procesar (ETL)*.
                 "Modo **solo lectura**: ejecuta una sentencia `SELECT` por vez. "
                 "Las escrituras y el acceso a archivos o a la red estan "
                 "bloqueados para proteger el almacen.",
-                icon=":material/read_only:",
+                icon=":material/lock:",
             )
             st.selectbox(
                 "Ejemplos de consultas", list(EJEMPLOS_SQL), key="sql_ejemplo_lbl",
@@ -864,7 +777,7 @@ def _wizard_primer_uso():
             except Exception as e:  # noqa: BLE001
                 st.error(f"No se pudo generar datos de ejemplo: {e}")
         if st.button("Lo haré después",
-                     icon=":material/later:", width="stretch",
+                     icon=":material/schedule:", width="stretch",
                      key="wizard_despues"):
             st.session_state["_onboarding_completado"] = True
             st.rerun()

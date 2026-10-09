@@ -191,11 +191,20 @@ def get_store(cfg=None, usar_cache: Optional[bool] = None):
         try:
             return AlmacenPostgres(dbname=dbname_postgres(cfg))
         except Exception as e:  # noqa: BLE001 — se reenvia con contexto, no se traga
+            # 3D000 (invalid_catalog_name) o el texto de libpq: la base
+            # aun no existe, que es lo que pasa en un despliegue recien
+            # montado o al anadir un workspace sin repartir topologia.
+            faltante = (getattr(e, "pgcode", None) == "3D000"
+                        or "does not exist" in str(e))
+            causa = ("La base de este workspace todavia no existe. "
+                     if faltante else "")
             raise RuntimeError(
                 f"No se pudo conectar con Postgres para el workspace "
                 f"'{getattr(cfg, 'clave', '?')}': {e}\n"
-                "Si es la primera vez, cada workspace necesita su propia base "
-                "de datos: revisa GIRO_PG_* y GIRO_ALMACEN_MOTOR."
+                f"{causa}"
+                "Crea las bases que falten con 'python main.py workspace "
+                "init-db' (una por workspace), o revisa GIRO_PG_* y "
+                "GIRO_ALMACEN_MOTOR."
             ) from e
     from .storage import DataStore
     cache = cfg.usar_cache if usar_cache is None else usar_cache

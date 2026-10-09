@@ -63,11 +63,11 @@ def principal():
                         pop, "servicio", "frecuencia", color="frecuencia", color_cont="YlOrRd",
                         etiquetas={"servicio": "Servicio", "frecuencia": "Veces"},
                     ), width="stretch", height="stretch")
-                    st.dataframe(pop, width="stretch", height=280,
-                                 column_config={
-                                     "servicio": "Servicio",
-                                     "frecuencia": st.column_config.NumberColumn("Veces"),
-                                 })
+                    c.dataframe(pop, alto=280,
+                                column_config={
+                                    "servicio": "Servicio",
+                                    "frecuencia": st.column_config.NumberColumn("Veces"),
+                                })
             else:
                 c.vacio("Sin datos de demanda de servicios.", icono=":material/query_stats:",
                         detalle="Se necesitan facturas con el detalle de servicios.")
@@ -81,8 +81,8 @@ def principal():
                     ing.head(15), "servicio", "subtotal", color="subtotal", color_cont="Blues",
                     etiquetas={"servicio": "Servicio", "subtotal": "Ingresos"},
                 ), width="stretch", height="stretch")
-                st.dataframe(
-                    ing, width="stretch", height=280,
+                c.dataframe(
+                    ing, alto=280,
                     column_config={
                         "servicio": "Servicio",
                         "subtotal": st.column_config.NumberColumn("Ingresos", format=c.formato_moneda(cfg.moneda)),
@@ -133,8 +133,8 @@ def principal():
                 with c.panel("Servicios del catalogo", "Precio base y tiempo estimado de cada servicio",
                              icono=":material/format_list_bulleted:"):
                     cat["precio_base"] = pd.to_numeric(cat["precio_base"], errors="coerce")
-                    st.dataframe(
-                        cat, width="stretch",
+                    c.dataframe(
+                        cat,
                         column_config={
                             "id": "ID",
                             "nombre": "Servicio",

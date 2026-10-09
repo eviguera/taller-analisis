@@ -9,6 +9,8 @@ Aislamiento multi-tenant (regla 1): la unidad de aislamiento es la base de
 datos, equivalente al fichero ``.duckdb`` por workspace de DuckDB — un
 ``AlmacenPostgres`` por workspace (``GIRO_PG_DBNAME`` o ``dbname=``), con
 sus esquemas ``main``/``core``/``analitica``/``giro_meta`` dentro.
+``asegurar_base_workspace`` crea esa base si falta (la topologia la
+repara ``python main.py workspace init-db``).
 
 Seguridad (reglas 2 y 4):
   * credenciales solo desde ``os.environ`` (``GIRO_PG_*``) o argumentos
@@ -342,4 +344,101 @@ class AlmacenPostgres(PuertoAlmacen):
         return DataStore._columna(col)
 
 
-__all__ = ["AlmacenPostgres"]
+# ---------- topologia: la base de cada workspace ----------
+
+def _conexion_admin(timeout_segundos: int = 5):
+    """Conexion a la base de administracion (para crear bases).
+
+    Misma fuente que ``AlmacenPostgres``: ``GIRO_PG_*`` del entorno, sin
+    secretos por defecto. La base es ``GIRO_PG_DBNAME`` y, si no esta
+    puesto, ``postgres`` — el ``CREATE DATABASE`` puede lanzarse desde
+    cualquier base, no hace falta ser superusuario para elegir una de
+    administracion. El DSN nunca se loguea ni se devuelve en errores.
+    """
+    parametros = {
+        "host": _de_entorno("GIRO_PG_HOST"),
+        "port": _de_entorno("GIRO_PG_PORT"),
+        "user": _de_entorno("GIRO_PG_USER"),
+        "password": _de_entorno("GIRO_PG_PASSWORD"),
+        "dbname": _de_entorno("GIRO_PG_DBNAME") or "postgres",
+    }
+    return psycopg2.connect(
+        **{k: v for k, v in parametros.items() if v is not None},
+        connect_timeout=timeout_segundos,
+    )
+
+
+def asegurar_base_workspace(cfg) -> bool:
+    """Crea la base de datos propia de ``cfg`` si aun no existe.
+
+    Devuelve ``True`` si la creo ahora y ``False`` si ya existia — la
+    respuesta que la CLI traduce a ``creada`` / ``ya existia``. Es
+    idempotente: volver a llamar sobre una base existente no la toca.
+
+    **Unica sentencia sin bind parameters del repo (regla 4).**
+    ``CREATE DATABASE`` no admite placeholders en PostgreSQL: el nombre de
+    base no es un valor, es un identificador de catalogo, asi que viaja
+    entre comillas dobles. Ese nombre **no** sale de ninguna entrada de
+    usuario ni de config: lo deriva siempre ``dbname_postgres(cfg)``, que
+    sanea la clave del workspace (solo queda ``[a-z0-9_]``) y valida los
+    63 bytes de Postgres, de modo que no hay comilla ni punto y coma por
+    donde inyectar. Ninguna otra sentencia de este modulo se sale del
+    bind; la comprobacion de existencia de abajo, por ejemplo, si va con
+    ``%s``.
+
+    Si el usuario de ``GIRO_PG_USER`` no tiene permiso ``CREATEDB`` lanza
+    ``RuntimeError`` con la accion concreta que debe ejecutar el operador
+    (crear la base a mano con el nombre exacto, o conceder el permiso).
+    Ningun fallo se traga: la CLI lo imprime por workspace y sale con
+    codigo distinto de cero.
+    """
+    # Import local: evita el ciclo con ``get_store``, que importa este
+    # modulo dentro de su cuerpo.
+    from ..data_loader import dbname_postgres
+
+    nombre = dbname_postgres(cfg)
+    try:
+        conn = _conexion_admin()
+    except psycopg2.Error as e:
+        raise RuntimeError(
+            f'No se pudo conectar con PostgreSQL para crear la base '
+            f'"{nombre}": {e}\n'
+            "Revisa GIRO_PG_HOST/PORT/USER/PASSWORD/DBNAME en el entorno."
+        ) from e
+
+    try:
+        # Autocommit obligatorio: CREATE DATABASE no se admite dentro de
+        # una transaccion (psycopg2 la abortaria con
+        # "CREATE DATABASE cannot run inside a transaction block").
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s",
+                        (nombre,))
+            if cur.fetchone() is not None:
+                return False
+            try:
+                cur.execute(f'CREATE DATABASE "{nombre}"')
+            except psycopg2.errors.DuplicateDatabase:
+                # Otra proceso la creo justo entre el SELECT y el CREATE:
+                # para el llamador la base ya esta. No es un error.
+                return False
+            except psycopg2.errors.InsufficientPrivilege as e:
+                raise RuntimeError(
+                    f"El usuario de GIRO_PG_USER no tiene el permiso "
+                    f"CREATEDB: no se pudo crear la base \"{nombre}\".\n"
+                    f"Solucion A (el operador la crea a mano, desde psql "
+                    f"conectado a otra base, p. ej. 'psql -d postgres'):\n"
+                    f"    CREATE DATABASE \"{nombre}\";\n"
+                    f"Solucion B (si se controla el servidor, se concede "
+                    f"el permiso al usuario de GIRO_PG_USER):\n"
+                    f"    ALTER USER <usuario> CREATEDB;\n"
+                    f"Despues 'python main.py workspace init-db' la "
+                    f"reportara como 'ya existia'."
+                ) from e
+        log.info("Base de PostgreSQL creada: %s", nombre)
+        return True
+    finally:
+        conn.close()
+
+
+__all__ = ["AlmacenPostgres", "asegurar_base_workspace"]

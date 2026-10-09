@@ -15,7 +15,6 @@ import streamlit as st
 
 from src import aplicacion
 from src.core import auth
-from src.core.pipeline import procesar_etl
 from src.data_loader import load_all
 from src.analyzer import Analyzer
 from src.predictions import Predictor
@@ -189,7 +188,7 @@ def resumen_calidad(data):
 def ejecutar_etl_ui():
     """Ejecuta el ETL, actualiza DuckDB y limpia caches para ver los cambios."""
     cfg = obtener_config()
-    resultado = procesar_etl(cfg)
+    resultado = aplicacion.ejecutar_etl(cfg)
     st.cache_data.clear()
     st.cache_resource.clear()
     return resultado

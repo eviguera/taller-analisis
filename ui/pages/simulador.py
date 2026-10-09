@@ -209,13 +209,13 @@ def principal():
         "ingresos": "Ingresos", "ebitda": "EBITDA",
     })
     fmt = c.formato_moneda(cfg.moneda)
-    st.dataframe(tabla[["Mes", "Clientes", "Ticket", "Ingresos", "EBITDA"]],
-                 width="stretch", height=300, column_config={
-                     "Clientes": st.column_config.NumberColumn("Clientes"),
-                     "Ticket": st.column_config.NumberColumn("Ticket", format=fmt),
-                     "Ingresos": st.column_config.NumberColumn("Ingresos", format=fmt),
-                     "EBITDA": st.column_config.NumberColumn("EBITDA", format=fmt),
-                 })
+    c.dataframe(tabla[["Mes", "Clientes", "Ticket", "Ingresos", "EBITDA"]],
+                alto=300, column_config={
+                    "Clientes": st.column_config.NumberColumn("Clientes"),
+                    "Ticket": st.column_config.NumberColumn("Ticket", format=fmt),
+                    "Ingresos": st.column_config.NumberColumn("Ingresos", format=fmt),
+                    "EBITDA": st.column_config.NumberColumn("EBITDA", format=fmt),
+                })
 
     st.caption(f":material/lightbulb: Simulado sobre los datos reales del workspace "
                f"**{cfg.clave}** — nada de promedios genéricos. Ejecuta las alertas y "

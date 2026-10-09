@@ -173,8 +173,8 @@ def principal():
 
     # ----- Vista previa de datos crudos -----
     with st.expander("Ver datos crudos (filtrados)", icon=":material/table_rows:"):
-        st.dataframe(filtrado.drop(columns=["detalles"], errors="ignore"),
-                     width="stretch", height=300)
+        c.dataframe(filtrado.drop(columns=["detalles"], errors="ignore"),
+                    alto=300)
 
 
 if __name__ == "__main__":

@@ -120,6 +120,79 @@ def _css_premium(oscuridad: bool) -> str:
     """
 
 
+def _css_accesibilidad(oscuridad: bool) -> str:
+    """CSS global de accesibilidad del shell del dashboard.
+
+    Reglas que todo el producto necesita y que ninguna pagina debe
+    repetir: anillo de foco visible para teclado (WCAG 2.4.7), targets
+    interactivos de 44px (WCAG 2.5.5) y el skip-to-content cuyo HTML
+    inyecta ``ui/app.py``. El anillo usa el azul del tema de
+    ``.streamlit/config.toml``: ``#2563eb`` sobre fondo claro (5.2:1
+    contra ``#fbfdff``) y ``#60a5fa`` sobre fondo oscuro (7:1 contra
+    ``#0b1526``); ambos superan los 3:1 exigidos a elementos no-texto.
+    """
+    contorno = "#60a5fa" if oscuridad else "#2563eb"
+    return f"""
+    <style>
+    /* Anillo de foco visible (WCAG 2.4.7): el contorno por defecto de
+       estos controles no siempre se ve en claro y en oscuro. */
+    .stButton > button:focus-visible,
+    .stDownloadButton > button:focus-visible,
+    .stFormSubmitButton > button:focus-visible,
+    .stLinkButton > a:focus-visible,
+    [data-testid="stLinkButton"] > a:focus-visible,
+    [data-testid="stTabs"] [role="tab"]:focus-visible,
+    [data-testid="stTabs"] button:focus-visible,
+    [data-testid="stTextInput"] input:focus-visible,
+    [data-testid="stTextArea"] textarea:focus-visible,
+    [data-testid="stNumberInput"] input:focus-visible,
+    [data-testid="stSelectbox"] button:focus-visible,
+    [data-testid="stMultiSelect"] button:focus-visible,
+    [data-testid="stDateInput"] button:focus-visible,
+    [data-testid="stTimeInput"] button:focus-visible,
+    [data-testid="stColorPicker"] button:focus-visible,
+    [data-testid="stCheckbox"] input:focus-visible,
+    [data-testid="stRadio"] input:focus-visible,
+    [data-testid="stSlider"] [role="slider"]:focus-visible,
+    [data-testid="stToggle"] button:focus-visible,
+    [data-testid="stForm"] input:focus-visible,
+    [data-testid="stForm"] textarea:focus-visible,
+    [data-testid="stForm"] button:focus-visible {{
+        outline: 3px solid {contorno};
+        outline-offset: 2px;
+    }}
+    /* Targets interactivos >= 44px: botones, descargas y envio de
+       formularios (spec Build A; tambien los de barra lateral). */
+    [data-testid="stButton"] > button,
+    [data-testid="stDownloadButton"] > button,
+    [data-testid="stFormSubmitButton"] > button,
+    [data-testid="stLinkButton"] > a {{
+        min-height: 44px;
+    }}
+    /* Skip-to-content: oculto a la izquierda hasta que recibe foco
+       (mismo patron que landing.py). El par <a id="contenido"> vive en
+       ui/app.py, como primer elemento del area principal. */
+    .skip-link {{
+        position: absolute;
+        left: -9999px;
+        top: 0;
+        z-index: 999;
+        background: #101828;
+        color: #ffffff;
+        font-weight: 700;
+        text-decoration: none;
+        padding: 12px 24px;
+        border-radius: 0 0 10px 0;
+    }}
+    .skip-link:focus {{
+        left: 0;
+        outline: 3px solid {contorno};
+        outline-offset: 2px;
+    }}
+    </style>
+    """
+
+
 def logo_html(texto_logo: str, slogan: str = "") -> str:
     """Cabecera de marca para el sidebar.
 
@@ -138,10 +211,11 @@ def logo_html(texto_logo: str, slogan: str = "") -> str:
 
 
 def aplicar(tema: dict) -> None:
-    """Inyecta el CSS del tema del workspace + overlay premium en la pagina."""
+    """Inyecta el CSS del tema del workspace + overlays premium y de accesibilidad en la pagina."""
     oscuro = False
     try:
         oscuro = st.context.theme.type == "dark"
     except Exception:  # noqa: BLE001  (st.context fuera de runtime: se asume claro)
         oscuro = False
-    st.markdown(css(tema) + _css_premium(oscuro), unsafe_allow_html=True)
+    st.markdown(css(tema) + _css_premium(oscuro) + _css_accesibilidad(oscuro),
+               unsafe_allow_html=True)

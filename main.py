@@ -11,6 +11,7 @@ Uso:
     python main.py workspace crear <clave> [--nombre ...] [--moneda ...] [--muestra]
     python main.py workspace listar
     python main.py workspace config <clave>
+    python main.py workspace init-db
     python main.py conector listar|sincronizar|seed-erp [--data DIR] [--usar]
     python main.py warehouse sync|ver --dsn DSN [--esquemas ...] [--prefijo giro_]
     python main.py reporte listar
@@ -428,8 +429,43 @@ def cmd_reporte(args):
         _abrir_en_navegador(ruta)
 
 
+def _asegurar_base_postgres(cfg) -> int:
+    """Crea la base de Postgres del workspace recien creado (solo si el
+    motor es postgres). Devuelve 0 si la base esta lista (creada o ya
+    existente) y 1 si fallo.
+
+    Ante un fallo NO se borra el workspace: un rollback del directorio
+    podria borrar uno preexistente (``crear_workspace`` es idempotente) y
+    el desfase es reparable. Lo que si pasa es el aviso —con el nombre
+    exacto de la base que falta— y el codigo de salida distinto de cero,
+    para que ningun script de despliegue lo ignore.
+    """
+    from src.data_loader import dbname_postgres
+    from src.storage.postgres import asegurar_base_workspace
+
+    nombre = dbname_postgres(cfg)
+    try:
+        creada = asegurar_base_workspace(cfg)
+    except Exception as e:  # noqa: BLE001 — se informa al operador, no se traga
+        # El motivo puede ser multilinea (la accion del operador viene
+        # dentro): se indenta para que no se pierda entre los avisos.
+        print()
+        print("AVISO: el workspace se creo en disco, pero su base de "
+              "Postgres NO existe:")
+        print(f"  base requerida: {nombre}")
+        print("  motivo: " + str(e).replace("\n", "\n    "))
+        print("  Reparacion:  python main.py workspace init-db")
+        return 1
+    print(f"  base postgres: {nombre} "
+          f"({'creada' if creada else 'ya existia'})")
+    return 0
+
+
 def cmd_workspace(args):
     from src import workspaces as ws
+    from src.core.config_manager import cargar_config
+    from src.data_loader import MOTOR_POSTGRES, dbname_postgres, motor_almacen
+    from src.storage.postgres import asegurar_base_workspace
 
     if args.accion == "crear":
         cfg = ws.crear_workspace(
@@ -439,6 +475,50 @@ def cmd_workspace(args):
         print(f"  nombre: {cfg.negocio_nombre} · sector: {cfg.sector} · moneda: {cfg.moneda}")
         print(f"  datos: {cfg.directorio_datos}")
         print(f"  almacen: {cfg.db_path}")
+        if motor_almacen(cfg) == MOTOR_POSTGRES and _asegurar_base_postgres(cfg):
+            raise SystemExit(1)
+    elif args.accion == "init-db":
+        # Repara el desfase entre workspaces/ y las bases de Postgres:
+        # recorre todos (el workspace raiz 'principal' incluido) y crea
+        # las bases que falten, informando por workspace. Sale con codigo
+        # distinto de cero si alguna fallo, para automatizar el despliegue.
+        if motor_almacen() != MOTOR_POSTGRES:
+            print("Motor de almacen: duckdb — no hay bases de Postgres "
+                  "que crear.")
+            print("Si este servidor usa PostgreSQL, vuelve a ejecutar con "
+                  "GIRO_ALMACEN_MOTOR=postgres.")
+            return
+        claves = [ws.CLAVE_PRINCIPAL] + [
+            c for c in ws.listar_workspaces() if c != ws.CLAVE_PRINCIPAL]
+        print(f"Bases de Postgres por workspace ({len(claves)}):")
+        creadas = existias = 0
+        fallos = []
+        for clave in claves:
+            try:
+                # 'principal' no vive en workspaces/: es la config raiz.
+                cfg = (cargar_config() if clave == ws.CLAVE_PRINCIPAL
+                       else ws.config_workspace(clave))
+                nombre = dbname_postgres(cfg)
+                creada = asegurar_base_workspace(cfg)
+            except Exception as e:  # noqa: BLE001 — se informa por workspace, no se traga
+                # El motivo puede traer la accion del operador en varias
+                # lineas: se indenta para que no se pierda el detalle.
+                print(f"  - {clave}: ERROR: "
+                      + str(e).replace("\n", "\n      "))
+                fallos.append(clave)
+                continue
+            if creada:
+                print(f"  - {clave}: creada ({nombre})")
+                creadas += 1
+            else:
+                print(f"  - {clave}: ya existia ({nombre})")
+                existias += 1
+        print(f"\n{creadas} creadas · {existias} ya existian · "
+              f"{len(fallos)} con error")
+        if fallos:
+            print("Revisa GIRO_PG_HOST/PORT/USER/PASSWORD/DBNAME (y que el "
+                  "usuario tenga CREATEDB) y vuelve a ejecutar.")
+            raise SystemExit(1)
     elif args.accion == "listar":
         lista = ws.listar_workspaces()
         print(f"Workspaces ({len(lista)}):")
@@ -622,6 +702,10 @@ def main():
     pw_f = pw_sub.add_parser("config", help="Muestra la configuracion de un workspace")
     pw_f.add_argument("clave", type=str)
     pw_f.set_defaults(func=cmd_workspace)
+    pw_i = pw_sub.add_parser(
+        "init-db", help="Crea las bases de Postgres que falten "
+                        "(requiere GIRO_ALMACEN_MOTOR=postgres)")
+    pw_i.set_defaults(func=cmd_workspace)
 
     pd = subparsers.add_parser("dashboard", help="Inicia el dashboard web")
     pd.add_argument("--data", type=str, default=None)

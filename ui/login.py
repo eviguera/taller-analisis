@@ -2,9 +2,12 @@
 
 Es la unica pieza de la interfaz que se renderiza sin sesion. Tres caminos:
 
-1. **OIDC** — si hay proveedor configurado en ``st.secrets["auth"]``, se delega
-   en ``st.login()``, que gestiona la cookie firmada por su cuenta. Es la via
-   recomendada en despliegues gestionados.
+1. **OIDC** — si hay proveedor configurado en ``st.secrets["auth"]`` (lo
+   comprueba ``auth.tiene_consola_oidc``), se delega en ``st.login()``, que
+   gestiona la cookie firmada por su cuenta. Es la via recomendada en
+   despliegues gestionados. La identidad de ``st.user`` llega al nucleo a
+   traves del puerto ``PuertoIdentidad``, que este modulo adapta y registra:
+   ``src/core/auth.py`` no importa streamlit.
 2. **Primer arranque** — si el registro esta vacio, se ofrece crear el admin.
    Bloqueado salvo que la app escuche solo en loopback o que el operador lo
    habilite con ``GIRO_AUTH_BOOTSTRAP=1``.
@@ -24,6 +27,29 @@ from src.core import auth
 from ui import context
 
 _ICONO = ":material/lock:"
+
+
+class IdentidadStreamlit:
+    """Adaptador del puerto ``PuertoIdentidad`` sobre ``st.user`` (OIDC)."""
+
+    def identidad_ui(self) -> dict | None:
+        """Identidad federada de la peticion, o ``None`` si no la hay.
+
+        Sin seccion ``[auth]`` en secrets, ``st.user.is_logged_in`` lanza en
+        cada rerun, asi que primero se pregunta si hay consola OIDC; con
+        consola pero sin sesion iniciada, ``None``.
+        """
+        if not auth.tiene_consola_oidc() or not st.user.is_logged_in:
+            return None
+        return {"email": st.user.email or "", "nombre": st.user.name or ""}
+
+
+# Registro del proveedor: assignment puro, sin I/O y sin tocar ``st.user``
+# (ese acceso ocurre dentro de ``identidad_ui``, en cada peticion). ``ui.app``
+# importa este modulo en su arranque, antes de la primera llamada a
+# ``auth.inicio_de_sesion``, asi que el proveedor ya esta fijado cuando la
+# app resuelve la sesion.
+auth.fijar_proveedor_identidad(IdentidadStreamlit())
 
 
 def _titulo() -> None:

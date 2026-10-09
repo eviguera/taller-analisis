@@ -224,6 +224,33 @@ def badge(texto, tipo="info"):
 
 
 # ------------------------------------------------------------------
+#  Tablas reutilizables
+# ------------------------------------------------------------------
+
+def dataframe(df, etiquetas=None, column_config=None, alto=None,
+              indice_visible=False, **kwargs):
+    """Tabla analitica con ancho de pagina (wrapper de ``st.dataframe``).
+
+    Las paginas no deben llamar a ``st.dataframe`` directamente: aqui se
+    centraliza el ancho fluido, el indice oculto por defecto (un indice
+    crudo de pandas no es informacion de negocio) y ``etiquetas``, un dict
+    ``{"columna": "Etiqueta legible"}`` que se funde en ``column_config``.
+    Un ``column_config`` explicito (NumberColumn con formato,
+    ProgressColumn, …) manda sobre la etiqueta de la misma columna.
+    ``indice_visible=True`` conserva el indice, necesario cuando la tabla
+    lo trae como etiqueta de fila (p. ej. una matriz de fechas).
+    """
+    config = dict(column_config or {})
+    for columna, titulo in (etiquetas or {}).items():
+        config.setdefault(columna, titulo)
+    opciones = dict(width="stretch", hide_index=not indice_visible,
+                    column_config=config or None, **kwargs)
+    if alto is not None:
+        opciones["height"] = alto
+    st.dataframe(df, **opciones)
+
+
+# ------------------------------------------------------------------
 #  Utilidades de descarga
 # ------------------------------------------------------------------
 

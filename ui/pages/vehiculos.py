@@ -68,7 +68,7 @@ def principal():
                                     width="stretch", height="stretch")
             with col2:
                 with c.panel("Ranking de marcas", "Numero de vehiculos de cada marca"):
-                    st.dataframe(conteo, width="stretch", height=280)
+                    c.dataframe(conteo, alto=280)
 
     with tab_ingresos:
         if tab_ingresos.open:
@@ -106,8 +106,8 @@ def principal():
 
                 c.titulo_seccion("Detalle de ingresos por vehiculo",
                                  "Los vehiculos con facturas, uno por fila")
-                st.dataframe(
-                    ing, width="stretch", height=380,
+                c.dataframe(
+                    ing, alto=380,
                     column_config={
                         "vehiculo_id": st.column_config.NumberColumn("Vehiculo"),
                         "ingresos": st.column_config.NumberColumn("Ingresos", format=c.formato_moneda(cfg.moneda)),
@@ -138,7 +138,7 @@ def principal():
                     conteo_edad, "Rango de Edad", "Cantidad", color_cont="Brwnyl",
                     etiquetas={"Rango de Edad": "Antiguedad (anios)", "Cantidad": "Vehiculos"},
                 ), width="stretch", height="stretch")
-            st.dataframe(conteo_edad, width="stretch", column_config={
+            c.dataframe(conteo_edad, column_config={
                 "Rango de Edad": st.column_config.TextColumn("Antiguedad (anios)"),
                 "Cantidad": st.column_config.NumberColumn("Vehiculos"),
             })
@@ -155,9 +155,9 @@ def principal():
 
     with tab_lista:
         if tab_lista.open:
-            st.dataframe(
+            c.dataframe(
                 vehiculos.drop(columns=["rango_edad"], errors="ignore"),
-                width="stretch", height=340,
+                alto=340,
                 column_config={
                     "id": st.column_config.NumberColumn("ID"),
                     "cliente_id": st.column_config.NumberColumn("ID cliente"),

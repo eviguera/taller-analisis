@@ -115,14 +115,14 @@ def principal():
                 df_roi["plan"] = df_roi["plan"].str.upper()
                 for col in ("costo_anual", "valor_recuperable", "delta_ingresos", "valor_total"):
                     df_roi[col] = df_roi[col].map(lambda v: c.moneda(v, cfg.moneda))
-                st.dataframe(
+                c.dataframe(
                     df_roi.rename(columns={
                         "plan": "Plan", "costo_anual": "Costo anual",
                         "valor_recuperable": "Recuperable",
                         "delta_ingresos": "Ingresos extra",
                         "valor_total": "Valor total GIRO", "roi": "ROI",
                     }),
-                    width="stretch", column_config={
+                    column_config={
                         "ROI": st.column_config.NumberColumn("ROI", format="%.1fx"),
                     },
                 )
@@ -157,7 +157,7 @@ def principal():
     for col in ("MRR bruto", "COGS (infra)", "Gasto fijo", "MRR neto"):
         tabla[col] = tabla[col].map(lambda v: c.moneda(v, cfg.moneda))
     tabla["Margen bruto"] = tabla["Margen bruto"].map(lambda v: f"{v*100:.0f}%")
-    st.dataframe(tabla, width="stretch", height=220, column_config={
+    c.dataframe(tabla, alto=220, column_config={
         "Clientes": st.column_config.NumberColumn("Clientes"),
     })
     st.caption(f":material/tune: Parámetros editables en el config `suscripcion:` "
