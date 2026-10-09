@@ -3,33 +3,22 @@
 Para agregar una nueva fuente solo hay que crear una clase que herede de
 `BaseLoader` e implementar `cargar(ruta, **kwargs)`. El resto del sistema
 (catalogo, pipeline, dashboard) funciona sin cambios.
+
+El contrato vive en `src.puertos.carga` (el nucleo exige el puerto, el
+adaptador lo implementa). Aqui se reexporta para que los imports existentes
+(`from .base import BaseLoader, CargaResultado`) sigan valiendo.
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from abc import ABC
 from pathlib import Path
-from typing import Any, Dict, Optional
 
-import pandas as pd
+from ..puertos.carga import CargaResultado, PuertoCarga
 
-
-@dataclass
-class CargaResultado:
-    datos: pd.DataFrame
-    metadatos: Dict[str, Any] = field(default_factory=dict)
-    columnas_originales: list = field(default_factory=list)
-    formato: str = ""
-    etiquetas: Dict[str, Any] = field(default_factory=dict)  # etiquetas de valores (PSPP/SPSS)
+__all__ = ["BaseLoader", "CargaResultado"]
 
 
-class BaseLoader(ABC):
+class BaseLoader(PuertoCarga, ABC):
     """Contrato de un cargador. Nuevos formatos = nuevas subclases."""
-
-    formato: str = "auto"
-
-    @abstractmethod
-    def cargar(self, ruta: Path, **kwargs) -> CargaResultado:
-        """Carga un archivo y devuelve el DataFrame mas sus metadatos."""
 
     def actualizar_formato(self, ruta: Path) -> "BaseLoader":
         """Devuelve un loader acorde al formato real del archivo."""

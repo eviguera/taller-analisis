@@ -13,9 +13,10 @@ def principal():
     rfm = analyzer.clientes_rfm()
     if rfm.empty:
         c.vacio(
-            "Datos insuficientes para el analisis de clientes.",
+            "Todavia no hay facturas con clientes para analizar.",
             icono=":material/groups:",
-            detalle="Se necesitan facturas con clientes asociados.",
+            detalle="El analisis necesita facturas con un cliente asociado.",
+            cta="Importa tus facturas en la pagina 'Mis datos'",
         )
         return
 
@@ -24,7 +25,10 @@ def principal():
     top_seg = rfm["segmento"].value_counts().idxmax() if total_clientes else "N/A"
     gasto_prom = gasto_total / max(total_clientes, 1)
 
-    mensual = analyzer.df.groupby("anio_mes")["total"].sum().tail(8)
+    # La tendencia del KPI debe medir lo mismo que el KPI: solo facturas con
+    # cliente (el RFM agrupa por cliente y excluye las que no tienen).
+    con_cliente = analyzer.df.dropna(subset=["cliente_id", "nombre"])
+    mensual = con_cliente.groupby("anio_mes")["total"].sum().tail(8)
     tendencia_monto = mensual.tolist() if not mensual.empty else None
 
     c.cabecera(
@@ -33,12 +37,12 @@ def principal():
         icono=":material/groups:",
     )
     c.kpi_grid([
-        ("Clientes", f"{total_clientes}", None, None, "Clientes en la base"),
+        ("Clientes", c.miles(total_clientes), None, None, "Clientes en la base"),
         ("Gasto total", c.moneda(gasto_total, cfg.moneda), None, tendencia_monto,
-         "Ingresos acumulados de clientes"),
+         "Gasto acumulado de todos los clientes"),
+        ("Gasto promedio por cliente", c.moneda(gasto_prom, cfg.moneda), None, None,
+         "Promedio de gasto por cliente"),
         ("Segmento dominante", top_seg, None, None, "Segmento RFM mas comun"),
-        ("Gasto promedio/cliente", c.moneda(gasto_prom, cfg.moneda), None, None,
-         "Gasto total entre numero de clientes"),
     ])
 
     tab_seg, tab_top, tab_frec, tab_plan = st.tabs(
@@ -61,22 +65,26 @@ def principal():
                         rfm, "frecuencia", "monto", color="segmento", hover=["nombre"], log_y=True,
                     ), width="stretch", height="stretch")
 
-            st.markdown("**Detalle RFM**")
-            st.dataframe(
-                rfm[["nombre", "recencia_dias", "frecuencia", "monto", "rfm_score", "segmento"]],
-                width="stretch", height=320,
-                column_config={
-                    "monto": st.column_config.NumberColumn("Monto", format=c.formato_moneda(cfg.moneda)),
-                    "recencia_dias": st.column_config.NumberColumn("Recencia (dias)"),
-                },
-            )
+            with c.panel("Detalle RFM", "Cliente, recencia, visitas, gasto y segmento"):
+                st.dataframe(
+                    rfm[["nombre", "recencia_dias", "frecuencia", "monto", "rfm_score", "segmento"]],
+                    width="stretch", height=320,
+                    column_config={
+                        "nombre": "Cliente",
+                        "recencia_dias": st.column_config.NumberColumn("Recencia (dias)"),
+                        "frecuencia": st.column_config.NumberColumn("Visitas"),
+                        "monto": st.column_config.NumberColumn("Monto", format=c.formato_moneda(cfg.moneda)),
+                        "rfm_score": st.column_config.NumberColumn("Puntaje RFM"),
+                        "segmento": "Segmento",
+                    },
+                )
             with st.expander("Que significan los segmentos?", icon=":material/help:"):
                 st.markdown("""
 | Segmento | Descripcion | Accion sugerida |
 |---|---|---|
 | Campeones | Mas frecuentes y de mayor valor | Programa de fidelidad y referidos |
 | Alto Valor | Gastan mucho, visitan menos | Visitas personalizadas y ofertas exclusivas |
-| Cliente Leal | Frecuentes pero gasto medio | Cross-selling de servicios |
+| Cliente Leal | Frecuentes pero gasto medio | Venta cruzada de servicios |
 | Activo | Visitas regulares | Mantener comunicacion |
 | En Riesgo | Frecuencia en descenso | Recordatorios + descuentos de reactivacion |
 | Perdido | Mucho tiempo sin venir | Campana de recuperacion agresiva |
@@ -92,13 +100,16 @@ def principal():
                     top, "nombre", "total_gastado", color="facturas", color_cont="Blues",
                     etiquetas={"nombre": "Cliente", "total_gastado": "Gasto total"},
                 ), width="stretch", height="stretch")
-            st.dataframe(
-                top, width="stretch", height=320,
-                column_config={
-                    "total_gastado": st.column_config.NumberColumn("Gasto total", format=c.formato_moneda(cfg.moneda)),
-                    "facturas": st.column_config.NumberColumn("Facturas"),
-                },
-            )
+                st.dataframe(
+                    top, width="stretch", height=320,
+                    column_config={
+                        "cliente_id": "ID cliente",
+                        "nombre": "Cliente",
+                        "facturas": st.column_config.NumberColumn("Facturas"),
+                        "total_gastado": st.column_config.NumberColumn("Gasto total", format=c.formato_moneda(cfg.moneda)),
+                        "ultima_visita": "Ultima visita",
+                    },
+                )
 
     with tab_frec:
         if tab_frec.open:
@@ -109,16 +120,31 @@ def principal():
                     frec.head(15), "nombre", "facturas", color_cont="Purples",
                     etiquetas={"nombre": "Cliente", "facturas": "Visitas"},
                 ), width="stretch", height="stretch")
-            st.dataframe(frec, width="stretch", height=320)
+                st.dataframe(
+                    frec, width="stretch", height=320,
+                    column_config={
+                        "nombre": "Cliente",
+                        "facturas": st.column_config.NumberColumn("Visitas"),
+                        "promedio_dias_entre_visitas": st.column_config.NumberColumn(
+                            "Dias entre visitas (promedio)", format="%.1f"),
+                    },
+                )
 
     with tab_plan:
         if tab_plan.open:
             sugerencias = predictor.proxima_factura_demanda()
             if not sugerencias.empty:
-                c.titulo_seccion("Clientes sugeridos para contacto",
-                                 "Acciones recomendadas por recencia de visita",
-                                 icono=":material/campaign:")
-                st.dataframe(sugerencias, width="stretch", height=300)
+                with c.panel("Clientes sugeridos para contacto",
+                             "Acciones recomendadas por recencia de visita",
+                             icono=":material/campaign:"):
+                    st.dataframe(
+                        sugerencias, width="stretch", height=300,
+                        column_config={
+                            "cliente": "Cliente",
+                            "dias_sin_visita": st.column_config.NumberColumn("Dias sin visita"),
+                            "sugerencia": "Sugerencia",
+                        },
+                    )
             else:
                 st.success("No hay campanas de reactivacion pendientes por ahora.")
 

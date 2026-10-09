@@ -59,7 +59,7 @@ class Predictor:
             grupo["dia_semana"] = grupo["fecha"].dt.dayofweek
         return grupo
 
-    def predecir_ingresos(self, meses_futuros=6, usar_registro=True):
+    def predecir_ingresos(self, meses_futuros=6):
         """Prediccion de ingresos mensuales usando regresion con lags."""
         df = self.df.copy()
         serie = df.groupby(df["fecha"].dt.to_period("M"))["total"].sum().reset_index()
@@ -101,25 +101,23 @@ class Predictor:
         naive_mae = float(np.mean(np.abs(modelo_df["ingresos"] - naive_pred)))
 
         registro = None
-        if usar_registro:
-            reg = self._registro()
-            previo, meta = reg.cargar("ingresos")
-            if meta and meta.get("n_muestras") == n_muestras and previo is not None:
-                modelo = previo
-                evaluacion = dict(meta.get("evaluacion", {}))
-                evaluacion["fuente"] = "registro"
-                registro = meta
-            else:
-                modelo = GradientBoostingRegressor(n_estimators=200, random_state=42, max_depth=3, learning_rate=0.1)
-                modelo.fit(X_train, y_train)
-                evaluacion = _evaluar(modelo)
-                registro = reg.guardar("ingresos", modelo, {
-                    "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
-                })
+        reg = self._registro()
+        previo, meta = reg.cargar("ingresos")
+        # Igual que en churn: reutilizar exige coincidencia de muestras Y de
+        # features; si no, se reentrena en lugar de fallar al predecir.
+        if (meta and meta.get("n_muestras") == n_muestras and previo is not None
+                and meta.get("features") == features):
+            modelo = previo
+            evaluacion = dict(meta.get("evaluacion", {}))
+            evaluacion["fuente"] = "registro"
+            registro = meta
         else:
             modelo = GradientBoostingRegressor(n_estimators=200, random_state=42, max_depth=3, learning_rate=0.1)
             modelo.fit(X_train, y_train)
             evaluacion = _evaluar(modelo)
+            registro = reg.guardar("ingresos", modelo, {
+                "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
+            })
 
         # Generar predicciones futuras paso a paso (avanzando un mes real por iteracion)
         predicciones = []
@@ -232,7 +230,7 @@ class Predictor:
             "tendencias": pd.DataFrame(info),
         }
 
-    def predecir_churn(self, usar_registro=True):
+    def predecir_churn(self):
         """Prediccion de churn de clientes usando RFM + Random Forest."""
         df = self.df.copy()
         hoy = df["fecha"].max()
@@ -269,7 +267,14 @@ class Predictor:
             X, y, test_size=0.3, random_state=42, shuffle=False)
 
         def _aplicar(m):
-            return m.predict_proba(X)[:, 1]
+            # Con split temporal sin stratify, y_train puede quedar con una
+            # sola clase: entonces predict_proba devuelve Nx1 y `[:, 1]`
+            # revienta porque no existe la clase positiva. Si el modelo no
+            # conoce el churn (clase 1), nadie esta en riesgo.
+            clases = list(getattr(m, "classes_", []))
+            if 1 not in clases:
+                return np.zeros(len(X))
+            return m.predict_proba(X)[:, clases.index(1)]
 
         def _metrica(m):
             y_pred = m.predict(X_test)
@@ -284,25 +289,25 @@ class Predictor:
 
         n_muestras = len(X)
         registro = None
-        if usar_registro:
-            reg = self._registro()
-            previo, meta = reg.cargar("churn")
-            if previo is not None and meta and meta.get("n_muestras") == n_muestras:
-                modelo = previo
-                evaluacion = dict(meta.get("evaluacion", {}))
-                evaluacion["fuente"] = "registro"
-                registro = meta
-            else:
-                modelo = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
-                modelo.fit(X_train, y_train)
-                evaluacion = _metrica(modelo)
-                registro = reg.guardar("churn", modelo, {
-                    "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
-                })
+        reg = self._registro()
+        previo, meta = reg.cargar("churn")
+        # Reutilizar solo si coincide el nº de muestras Y las features con las
+        # que se entrenó. Sin la segunda condición, un modelo persistido con
+        # features distintas revienta en predict_proba (n_muestras puede ser
+        # identico con esquemas de features diferentes).
+        if (previo is not None and meta and meta.get("n_muestras") == n_muestras
+                and meta.get("features") == features):
+            modelo = previo
+            evaluacion = dict(meta.get("evaluacion", {}))
+            evaluacion["fuente"] = "registro"
+            registro = meta
         else:
             modelo = RandomForestClassifier(n_estimators=200, random_state=42, class_weight="balanced")
             modelo.fit(X_train, y_train)
             evaluacion = _metrica(modelo)
+            registro = reg.guardar("churn", modelo, {
+                "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
+            })
 
         rfm["prob_churn"] = _aplicar(modelo)
 

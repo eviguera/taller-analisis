@@ -13,9 +13,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from .puertos import PuertoRegistroModelos
 
-class ModelRegistry:
+
+class ModelRegistry(PuertoRegistroModelos):
     """Guardado/carga de modelos por tipo (churn, ingresos, demanda, ...)."""
+
 
     def __init__(self, directorio: Optional[Path] = None):
         self.directorio = Path(directorio) if directorio else Path("data/models")

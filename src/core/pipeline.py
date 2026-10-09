@@ -22,7 +22,6 @@ from .config import AppConfig, DatasetConfig
 from .config_manager import ETIQUETAS_ESPERADAS
 from .hechos import construir_factura_detalle
 from ..loaders import get_loader, CargaResultado
-from ..storage import DataStore
 from ..storage.schema import VISTAS_ANALITICA
 
 log = logging.getLogger("taller.pipeline")
@@ -195,7 +194,13 @@ def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
     asignaciones = vincular_archivos_a_datasets(archivos, cfg)
     resultado.asignaciones = asignaciones
 
-    store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=usar_cache) if guardar else None
+    # Punto unico de decision del motor (get_store): el ETL escribe en el
+    # mismo almacen del que despues lee la UI, sea DuckDB o Postgres. El
+    # import es perezoso porque data_loader importa este modulo arriba.
+    store = None
+    if guardar:
+        from ..data_loader import get_store  # noqa: PLC0415
+        store = get_store(cfg, usar_cache=usar_cache)
 
     tablas = _cargar_archivos_locales(cfg, directorio, asignaciones, resultado)
     tablas = _ejecutar_conectores_externos(cfg, tablas, resultado)

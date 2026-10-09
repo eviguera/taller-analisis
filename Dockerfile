@@ -2,6 +2,7 @@
 # Sirve el PAQUETE GIRO completo para venta/consultoria en un solo contenedor:
 #  - dashboard analitico  (Streamlit) en el puerto 8501
 #  - landing de ventas    (Streamlit) en el puerto 8502
+#  - API HTTP             (FastAPI/uvicorn) en el puerto 8503
 # Adecuada para HF Spaces (plan CPU gratuito), Docker Compose y cualquier VPS.
 #
 # El proceso corre como usuario no privilegiado (uid 1001). La imagen NO
@@ -16,6 +17,8 @@ ENV PYTHONUNBUFFERED=1 \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     GIRO_DASH_PORT=8501 \
     GIRO_LANDING_PORT=8502 \
+    GIRO_API_PORT=8503 \
+    GIRO_API_HOST=0.0.0.0 \
     GIRO_DEMO_URL="/?kiosco=1"
 
 WORKDIR /app
@@ -36,17 +39,19 @@ RUN pip install --no-cache-dir -r requirements.lock
 # datos de tenants y modelos entrenados).
 COPY --chown=giro:giro . .
 
-# Entrypoint: gobierno de los dos procesos (dashboard + landing).
+# Entrypoint: gobierno de los tres procesos (dashboard + landing + API).
 RUN chmod +x entrypoint.sh
 
 USER giro
 
-EXPOSE 8501 8502
+EXPOSE 8501 8502 8503
 
 # El contenedor escucha en 0.0.0.0, asi que la app exige autenticacion
 # (ver auth_activada). Define GIRO_AUTH_SECRET y monta el registro de usuarios
-# en /app/config/usuarios.yaml antes de exponerlo.
+# en /app/config/usuarios.yaml antes de exponerlo. Los tres puertos se
+# comprueban: el dashboard y la landing por su health de Streamlit, la API
+# por /api/salud, que es su unico endpoint publico.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (8501, 8502)]" || exit 1
+    CMD python -c "import os, urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (os.environ.get('GIRO_DASH_PORT','8501'), os.environ.get('GIRO_LANDING_PORT','8502'))]; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('GIRO_API_PORT','8503') + '/api/salud', timeout=3)" || exit 1
 
 CMD ["./entrypoint.sh"]

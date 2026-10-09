@@ -11,6 +11,8 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+from .core.config import VENTANA_MESES
+
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
          "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
@@ -32,7 +34,7 @@ def base_datos(df: pd.DataFrame) -> dict:
     if d.empty:
         return {}
     fecha_max = d["fecha"].max()
-    hist = d[d["fecha"] > fecha_max - pd.DateOffset(months=12)].copy()
+    hist = d[d["fecha"] > fecha_max - pd.DateOffset(months=VENTANA_MESES)].copy()
     if hist.empty:
         hist = d.copy()
 
@@ -85,7 +87,7 @@ def ratios_estacionales(df: pd.DataFrame) -> Optional[Dict[int, float]]:
     return {int(m): round(float(v) / media, 4) for m, v in por_mes.items()}
 
 
-def proyectar(df: pd.DataFrame, meses: int = 12,
+def proyectar(df: pd.DataFrame, meses: int = VENTANA_MESES,
               crecimiento_anual: float = 0.10,
               ticket_crecimiento: float = 0.04,
               churn_mensual: Optional[float] = None,

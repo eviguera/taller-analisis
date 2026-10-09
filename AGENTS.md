@@ -1,6 +1,6 @@
 # AGENTS.md — GIRO (taller-analisis)
 
-Plataforma de analítica para PYMEs. Un contenedor, dos apps Streamlit, multi-tenant.
+Plataforma de analítica para PYMEs. Un contenedor, tres procesos: dos apps Streamlit + una API HTTP. Multi-tenant.
 
 Este archivo se carga siempre. Los agentes especializados viven en `.opencode/agent/`.
 
@@ -8,14 +8,20 @@ Este archivo se carga siempre. Los agentes especializados viven en `.opencode/ag
 
 | | |
 |---|---|
-| Entry points | `dashboard.py` (:8501, autenticado) · `landing.py` (:8502, público) · `main.py` (CLI) |
+| Entry points | `dashboard.py` (:8501, autenticado) · `landing.py` (:8502, público) · `main.py` (CLI) · `src/api/` (:8503, FastAPI) |
+| **Puertos** | `src/puertos/` — `PuertoAlmacen`, `PuertoRegistroModelos`, `PuertoCarga`: las interfaces del hexágono |
+| **Casos de uso** | `src/aplicacion/` — `almacen.py` (firma, sincronizar, estructura, vista, consulta). **Sin `streamlit`, sin `duckdb`, sin `fastapi`** — hay test que lo garantiza |
 | Núcleo / ETL | `src/core/` — `pipeline.py`, `hechos.py`, `conector_sql.py`, `warehouse.py`, `auth.py`, `config.py`, `templates.py` |
-| Almacenamiento | `src/storage/` — `schema.py` (vistas DuckDB), `store.py` |
+| Almacenamiento | `src/storage/` — `store.py` (DataStore/DuckDB), `postgres.py` (AlmacenPostgres), `dialecto.py` (SQL de cada motor), `schema.py` (vistas analíticas) |
+| API HTTP | `src/api/` — `app.py` (`crear_app`), `rutas.py`, `deps.py` (sesión/permisos), `esquemas.py` |
 | Carga | `src/loaders/` — `base.py` + csv / excel / parquet / pspp, `factory.py` |
 | Analítica | `src/analyzer.py`, `predictions.py`, `model_registry.py`, `recomendaciones.py`, `alerts.py`, `simulador.py`, `negocio.py` |
+| Formato | `src/formatos.py` — `miles`/`moneda` compartidos: UI, reportes y CLI delegan aquí. No dupliques formateadores |
 | Reportes | `src/reporting/` — motor de reportes HTML white-label |
-| UI | `ui/` — `app.py`, `context.py`, `components.py`, `theme.py`, `login.py`, `pages/*.py` (12 páginas) |
+| UI | `ui/` — `app.py`, `context.py` (adaptador fino que delega en `src.aplicacion`), `components.py`, `theme.py`, `login.py`, `pages/*.py` (12 páginas) |
 | Multi-tenant | `src/workspaces.py` |
+
+**Arquitectura hexagonal.** Las entradas (UI, API, CLI) llaman a `src/aplicacion`, que habla con `src/puertos`; las implementaciones concretas viven en `src/storage`. **El almacen se obtiene siempre con `get_store()` (`src/data_loader.py`) — es el único punto de decisión de motor** (DuckDB por defecto, Postgres con `GIRO_ALMACEN_MOTOR=postgres`, una base por workspace). Construir un `DataStore` a mano fuera de ese punto es un bug: el ETL, la UI y la API escribirían en sitios distintos.
 
 Datos de ejemplo: taller mecánico (50 clientes, 88 vehículos, 40 servicios, 350 facturas, 24 productos). **El esquema es transversal** — el producto se vende a cualquier negocio. No hardcodees "taller", "vehículo" ni "kilometraje" en lógica de negocio.
 
@@ -36,12 +42,14 @@ Datos de ejemplo: taller mecánico (50 clientes, 88 vehículos, 40 servicios, 35
 .venv/bin/python main.py --help
 .venv/bin/streamlit run dashboard.py   # :8501
 .venv/bin/streamlit run landing.py     # :8502
+uvicorn --factory src.api.app:crear_app --port 8503   # API
+.venv/bin/python -m unittest discover -s tests        # suite (con Postgres: GIRO_PG_PASSWORD=... GIRO_PG_HOST=... GIRO_PG_PORT=...)
 docker compose up -d --build
 ```
 
 ## Reglas inviolables
 
-1. **Aislamiento por workspace.** Ninguna función de negocio lee ni escribe fuera del workspace que recibe. **Las claves de caché (`@st.cache_data`, `@st.cache_resource`) deben incluir el workspace** — omitirlo es una fuga de datos entre clientes, no un bug de rendimiento.
+1. **Aislamiento por workspace.** Ninguna función de negocio lee ni escribe fuera del workspace que recibe. **Las claves de caché (`@st.cache_data`, `@st.cache_resource`) deben incluir el workspace** — omitirlo es una fuga de datos entre clientes, no un bug de rendimiento. En Postgres la unidad de aislamiento es la **base de datos por workspace** (`dbname_postgres()` la deriva; nunca pases un `dbname` único para todos).
 2. **Nada de secretos en el código.** Solo `os.environ`. Nunca en el código, el `Dockerfile`, el `docker-compose.yml` ni los logs. El contenedor corre en `0.0.0.0`, así que la app **exige** autenticación y `GIRO_AUTH_SECRET`.
 3. **Sin datos de tenants en la imagen ni en el repo.** `.dockerignore` excluye `data/`, `workspaces/`, `reports/`, `*.duckdb`, `*.parquet`, `*.joblib`, `config/usuarios.yaml`. Ese contrato no se rompe.
 4. **SQL siempre parametrizado.** Bind parameters, nunca f-strings ni concatenación. Los identificadores dinámicos (nombre de tabla/columna) se validan contra una allowlist.
@@ -50,7 +58,7 @@ docker compose up -d --build
 7. **Cero efectos secundarios a nivel de import.** Nada de `st.set_page_config`, `duckdb.connect()` ni lectura de disco en import.
 8. **Nada de `except Exception: pass`.** Un error tragado convierte un bug visible en uno invisible.
 9. **No añadas dependencias** sin justificarlo. Stack actual: pandas, numpy, duckdb, pyarrow, scikit-learn, plotly, matplotlib, streamlit, jinja2, joblib, pyreadstat, PyYAML, sqlalchemy, psycopg2-binary, pymysql.
-10. **No introducas frameworks nuevos.** Es un monolito de analítica. No traigas FastAPI, React, un ORM ni una capa de abstracción de servicios.
+10. **No introducas frameworks nuevos.** Es un monolito de analítica. No traigas React, un ORM ni una capa de abstracción de servicios. **Excepción ya decidida y agotada:** FastAPI existe (adaptador de entrada `src/api/`, decisión explícita del dueño de abrir esta regla). No se autoriza ningún otro framework nuevo; si te apetece uno, pregúntalo antes de instalarlo.
 11. **No hagas commit ni push** salvo que el usuario lo pida explícitamente.
 
 ## Dónde vive cada cosa

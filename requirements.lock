@@ -50,3 +50,11 @@ typing_extensions==4.16.0
 urllib3==2.7.0
 uvicorn==0.52.4
 websockets==16.1.1
+# --- API HTTP (adaptador de entrada; añade pydantic y sus ayudantes) ---
+annotated-doc==0.0.5
+annotated-types==0.8.0
+fastapi==0.143.0
+opentelemetry-api==1.45.1
+pydantic==2.14.0
+pydantic_core==2.50.0
+typing-inspection==0.4.4

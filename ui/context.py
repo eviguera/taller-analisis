@@ -11,14 +11,12 @@ permisos sobre una empresa no puede llegar a su datos aunque manipule
 ``st.session_state``.
 """
 
-import hashlib
-
 import streamlit as st
 
-from src.core import auth, conector_sql
-from src.core.config_manager import cargar_config
+from src import aplicacion
+from src.core import auth
 from src.core.pipeline import procesar_etl
-from src.data_loader import load_all, get_data_summary, get_store
+from src.data_loader import load_all
 from src.analyzer import Analyzer
 from src.predictions import Predictor
 from src import workspaces
@@ -140,12 +138,18 @@ def cargar_datos(_cfg, workspace: str | None = None):
     los conectores externos se re-consultaban por red tambien. Cambiar un
     fichero (o el mapeo) cambia la firma y refresca; ``sincronizar_conectores``
     y el ETL llaman a ``st.cache_data.clear()`` para forzar la relectura.
+
+    El ``ttl`` acota lo que la firma no alcanza a ver: la BD externa de un
+    conector cambia sin tocar ningun fichero local, y solo la UI limpia la
+    cache al sincronizar (el ETL por CLI corre en otro proceso y no puede).
+    El ``max_entries`` evita que cada firma antigua retenga su copia de los
+    datasets para siempre.
     """
     ws = workspace or obtener_workspace()
     return _cargar_datos_cacheado(ws, _firma_fuentes(_cfg), _cfg)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=600, max_entries=32)
 def _cargar_datos_cacheado(workspace: str, firma: str, cfg) -> dict:
     """Cache de ``load_all``. ``workspace`` y ``firma`` van en la clave (regla 1)."""
     return load_all(cfg)
@@ -179,7 +183,7 @@ def obtener_estado():
 
 
 def resumen_calidad(data):
-    return get_data_summary(data)
+    return aplicacion.resumen_calidad(data)
 
 
 def ejecutar_etl_ui():
@@ -192,149 +196,53 @@ def ejecutar_etl_ui():
 
 
 def consulta_sql(sql: str):
-    """Registra las tablas del workspace en DuckDB y ejecuta una consulta.
+    """Sincroniza el workspace y ejecuta una consulta de solo lectura.
 
     Solo admin. Es la unica via de SQL arbitrario de la app, asi que el
     permiso se comprueba aqui y no en el boton que la dispara: ocultar el
-    widget no protege nada si la funcion sigue siendo alcanzable.
+    widget no protege nada si la funcion sigue siendo alcanzable. La
+    validacion de la consulta ya no vive aqui: es parte del caso de uso.
     """
     exigir(auth.PERMISO_CONSOLA_SQL,
            "La consola SQL es una funcion de administracion.")
-    _validar_sql_solo_lectura(sql)
     cfg = obtener_config()
-    store = get_store(cfg)
-    try:
-        data = cargar_datos(cfg)
-        _sincronizar_almacen(store, cfg, data)
-        return store.consulta(sql)
-    finally:
-        store.cerrar()
+    return aplicacion.consulta_sql(cfg, cargar_datos(cfg), sql)
 
 
 def _validar_sql_solo_lectura(sql: str) -> None:
-    """La consola SQL aplica la MISMA regla que los conectores.
-
-    Antes habia aqui una lista propia de sentencias, paralela a la de
-    ``conector_sql``: dos listas con palabras distintas significa que una
-    pantalla puede relajarse sin que la otra se entere. Ahora hay una sola
-    implementacion compartida y aqui solo queda la llamada.
-    """
-    conector_sql.validar_solo_lectura(sql, "La consulta")
+    """Delegado al caso de uso: una sola implementacion compartida."""
+    aplicacion.validar_sql_solo_lectura(sql)
 
 
 def _firma_fuentes(cfg) -> str:
-    """Firma barata de los originales del workspace: mtimes/tamaños y mapeo.
-
-    No recorre los valores (eso costaria como la carga misma): basta con que
-    cambie un fichero o el mapeo para que la firma cambie. Se separa de la
-    firma completa para poder cachear ``cargar_datos`` sin haber cargado
-    nada todavia.
-    """
-    from pathlib import Path
-
-    partes = []
-    # El mapeo de columnas tambien define la estructura: si cambia sin tocar
-    # los ficheros, la firma debe cambiar igualmente.
-    try:
-        for nombre, dcfg in sorted((getattr(cfg, "datasets", None) or {}).items()):
-            partes.append(f"map:{nombre}:{sorted((dcfg.mapeo or {}).items())}")
-    except (AttributeError, TypeError):
-        pass
-    try:
-        base = Path(cfg.directorio_datos)
-        # El propio almacen vive aqui (almacen.duckdb y su .wal): cada
-        # escritura en la BD cambiaria su mtime y la firma se invalidaria a
-        # si misma en bucle, registrando siempre.
-        db = Path(cfg.db_path).name
-        excluidos = {db, f"{db}.wal", f"{db}.tmp"}
-        for ruta in sorted(base.iterdir()):
-            # Solo ficheros originales: los directorios (p. ej. data/cache,
-            # que esta DENTRO de directorio_datos) cambian de mtime al
-            # escribir la propia cache y la firma se invalidaria sin motivo.
-            if not ruta.is_file() or ruta.name in excluidos:
-                continue
-            try:
-                s = ruta.stat()
-            except OSError:
-                continue
-            partes.append(f"{ruta.name}:{s.st_mtime_ns}:{s.st_size}")
-    except OSError:
-        pass
-    return "|".join(partes)
+    """Firma de los originales del workspace. Va en la clave del cache."""
+    return aplicacion.firma_fuentes(cfg)
 
 
 def _firma_datos(cfg, data) -> str:
     """Firma de los datos ya cargados: fuentes + forma de cada dataset."""
-    import pandas as pd
-
-    partes = [_firma_fuentes(cfg)]
-    for nombre in sorted(data):
-        df = data[nombre]
-        if isinstance(df, pd.DataFrame):
-            partes.append(f"{nombre}:{df.shape[0]}x{df.shape[1]}:{len(df.columns)}")
-    return hashlib.sha1("|".join(partes).encode("utf-8")).hexdigest()
+    return aplicacion.firma_datos(cfg, data)
 
 
 def _sincronizar_almacen(store, cfg, data, materializar: bool = False) -> bool:
-    """Registra los datos en DuckDB solo si cambiaron desde la ultima carga.
-
-    Antes, leer UNA vista (o abrir la pestaña Esquema) volvía a hacer
-    DROP+CREATE de cada tabla y a reconstruir core/analitica entero en cada
-    rerun. La firma vive en ``giro_meta`` dentro del propio fichero DuckDB,
-    asi que si se recrea la DB la firma desaparece con ella.
-    """
-    if not data:
-        return False
-    firma = _firma_datos(cfg, data)
-    registrados = store.firma_carga("datos") == firma
-    if not registrados:
-        store.registrar_tablas(data)
-        store.guardar_firma(firma, "datos")
-    if materializar:
-        if store.firma_carga("estructura") != firma:
-            store.construir_estructura(data)
-            store.guardar_firma(firma, "estructura")
-    return not registrados
+    """Registra los datos en el almacen solo si cambiaron desde la ultima carga."""
+    return aplicacion.sincronizar_almacen(store, cfg, data, materializar=materializar)
 
 
 def obtener_estructura():
-    """Registra los datos en DuckDB, materializa core/analitica y devuelve
-    el catalogo de objetos del almacen del workspace."""
+    """Sincroniza el almacen, materializa core/analitica y devuelve el catalogo."""
     cfg = obtener_config()
-    store = get_store(cfg)
-    try:
-        data = cargar_datos(cfg)
-        _sincronizar_almacen(store, cfg, data, materializar=True)
-        return store.info_estructura()
-    finally:
-        store.cerrar()
+    return aplicacion.estructura(cfg, cargar_datos(cfg))
 
 
 def consultar_vista(nombre: str):
     """Consulta una vista del esquema analitica (p. ej. 'ingresos_mensuales')."""
     cfg = obtener_config()
-    store = get_store(cfg)
-    try:
-        data = cargar_datos(cfg)
-        _sincronizar_almacen(store, cfg, data, materializar=True)
-        return store.consultar_vista(nombre)
-    finally:
-        store.cerrar()
+    return aplicacion.vista(cfg, cargar_datos(cfg), nombre)
 
 
-VISTAS_PARA_EXPORTAR = [
-    "ingresos_mensuales",
-    "ingresos_por_marca",
-    "ingresos_por_vehiculo",
-    "rfm_clientes",
-    "churn_clientes",
-    "detalle_servicios",
-    "demanda_servicios_mensual",
-    "ingresos_por_servicio_mensual",
-    "factura_detalle_desnormalizado",
-    "inventario_estado",
-    "facturas_con_dimensiones",
-]
+#: Vistas que salen en la exportacion analitica (el listado vive en el caso de uso).
+VISTAS_PARA_EXPORTAR = aplicacion.VISTAS_PARA_EXPORTAR
 
 
 def exportar_analitica_pspp(destino):
@@ -343,43 +251,8 @@ def exportar_analitica_pspp(destino):
     Devuelve (exportados: list[str], errores: dict). Util para llevar la
     analitica completa a PSPP/SPSS desde la interfaz.
     """
-    from pathlib import Path
-
-    from src.loaders.pspp_loader import exportar_sav
-
     cfg = obtener_config()
-    store = get_store(cfg)
-    destino = Path(destino)
-    destino.mkdir(parents=True, exist_ok=True)
-
-    exportados: list = []
-    errores: dict = {}
-    try:
-        data = cargar_datos(cfg)
-        if data:
-            store.registrar_tablas(data)
-            store.construir_estructura(data)
-
-        for nombre, df in data.items():
-            if df is None or df.empty:
-                continue
-            try:
-                exportar_sav(df, destino / f"{nombre}.sav", label_archivo=f"{nombre} exportado")
-                exportados.append(nombre)
-            except Exception as e:  # noqa: BLE001
-                errores[nombre] = str(e)
-
-        for vista in VISTAS_PARA_EXPORTAR:
-            try:
-                df = store.consultar_vista(vista)
-                exportar_sav(df, destino / f"analitica_{vista}.sav",
-                             label_archivo=f"analitica_{vista}")
-                exportados.append(f"analitica.{vista}")
-            except Exception as e:  # noqa: BLE001
-                errores[vista] = str(e)
-        return exportados, errores
-    finally:
-        store.cerrar()
+    return aplicacion.exportar_analitica_pspp(cfg, cargar_datos(cfg), destino)
 
 
 # ------------------------------------------------------------------

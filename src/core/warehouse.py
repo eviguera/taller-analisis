@@ -114,25 +114,30 @@ def _avisar_huerfanas(engine, base: str, efectivo: str) -> None:
 def sincronizar(cfg: AppConfig, dsn: str,
                 esquemas: tuple = ESQUEMAS_DISPONIBLES,
                 prefijo: str = "giro_") -> List[Dict]:
-    """Publica el almacen DuckDB hacia un warehouse SQL (via SQLAlchemy).
+    """Publica el almacen hacia un warehouse SQL (via SQLAlchemy).
 
-    Si el almacen local no existe (o esta desactualizado frente a los archivos
-    fuente) ejecuta el ETL antes de publicar, para que el warehouse refleje el
-    mismo estado que ve la analitica.
+    Si el almacen esta vacio ejecuta el ETL antes de publicar, para que el
+    warehouse refleje el mismo estado que ve la analitica. El almacen lo
+    decide ``get_store`` (DuckDB o Postgres); con Postgres no hay fichero
+    que comprobar, por eso la condicion es "sin estructura" y no "sin
+    archivo".
     """
-    from pathlib import Path
-    from ..storage.store import DataStore
+    from ..data_loader import get_store
 
-    ruta_bd = Path(cfg.db_path)
-    if not ruta_bd.exists():
+    store = get_store(cfg)
+    try:
+        pendiente = store.info_estructura().empty
+    finally:
+        store.cerrar()
+    if pendiente:
         from .pipeline import procesar_etl
-        log.info("El almacen local no existe: ejecutando ETL antes de publicar")
+        log.info("El almacen esta vacio: ejecutando ETL antes de publicar")
         res = procesar_etl(cfg)
         if res.errores:
             for nombre, err in res.errores.items():
                 log.warning("ETL sin %s: %s", nombre, err)
 
-    store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cfg.usar_cache)
+    store = get_store(cfg)
     engine = _engine(dsn)
     prefijo_base = prefijo
     prefijo = _prefijo_efectivo(cfg, prefijo)

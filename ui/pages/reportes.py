@@ -18,28 +18,6 @@ from ui import components as c
 from ui.context import en_kiosco, exigir_escritura, obtener_estado
 
 
-def _ruta_config(cfg) -> Path:
-    """Ruta al config.yaml del workspace activo (para persistir marca)."""
-    base = Path(__file__).resolve().parent.parent.parent
-    if (cfg.clave or "principal") == "principal":
-        return base / "config" / "config.yaml"
-    return base / "workspaces" / cfg.clave / "config" / "config.yaml"
-
-
-def _guardar_branding(cfg, cambios: dict):
-    """Persiste los campos de branding del reporte en el config del workspace."""
-    import yaml
-    ruta = _ruta_config(cfg)
-    raw = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
-    reportes = dict(raw.get("reportes") or {})
-    branding = dict(reportes.get("branding") or {})
-    branding.update({k: v for k, v in cambios.items() if v is not None and v != ""})
-    reportes["branding"] = branding
-    raw["reportes"] = reportes
-    ruta.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
-                    encoding="utf-8")
-
-
 def _generar(cfg, data, tipo: str, ocasion_label: str) -> list:
     """Genera el/los reportes y devuelve las rutas creadas."""
     gen = GeneradorReportes(cfg, data)
@@ -92,30 +70,32 @@ def principal():
 
     c.cabecera(
         "Reportes ejecutivos",
-        f"{cfg.negocio_nombre} · GIRO Reportes genera documentos autoanalizados "
-        "con la marca de tu consultora (white-label)",
+        f"{cfg.negocio_nombre} · Documentos con tus datos y la marca de tu consultora",
         icono=":material/description:",
     )
 
     if len(data) < 3:
         c.vacio(
-            "Faltan datasets para generar reportes.",
+            "Faltan datos para generar reportes.",
             icono=":material/database_off:",
-            detalle="Importa tus datos en 'Mis datos' antes de generar.",
+            detalle="Importa tus archivos en 'Mis datos' antes de generar.",
         )
         return
 
     # ------------------------------------------------------------------
     #  Marca white-label del reporte (reventa)
     # ------------------------------------------------------------------
+    if st.session_state.pop("rpt_marca_guardada", False):
+        c.confirmacion_exito("Marca guardada. Los reportes nuevos ya la usarán.")
+
     marca = br_mod.marca(cfg)
-    st.markdown("**Marca del reporte (white-label)**")
+    st.header("Marca del reporte", icon=":material/palette:")
     with st.container(border=True):
         col_b1, col_b2 = st.columns([2, 1])
         with col_b1:
-            consultora = st.text_input("Consultora / reventor", value=marca["consultora"],
+            consultora = st.text_input("Consultora", value=marca["consultora"],
                                        key="rpt_consultora",
-                                       help="Quien entrega el reporte.")
+                                       help="Quién entrega el reporte; se imprime en la portada.")
             contacto = st.text_input("Contacto", value=marca["contacto"] or "",
                                      key="rpt_contacto",
                                      placeholder="ventas@consultora.cl · +56 9 1234 5678")
@@ -123,31 +103,35 @@ def principal():
                                 placeholder="https://consultora.cl")
         with col_b2:
             color = st.color_picker("Color de marca", value=marca["color_primario"],
-                                    key="rpt_color")
-            ocasion_def = st.text_input("Rotulo de portada", value=br_mod.ocasion(cfg),
+                                    key="rpt_color",
+                                    help="Color principal de la marca en portada y encabezados.")
+            ocasion_def = st.text_input("Rótulo de portada", value=br_mod.ocasion(cfg),
                                         key="rpt_ocasion",
                                         placeholder="Reporte mensual")
         if en_kiosco():
-            st.caption("Modo presentacion: la marca se edita fuera del kiosco.")
+            st.caption("Modo presentación: la marca se edita fuera del kiosco.")
         guardar = st.button("Guardar marca", icon=":material/save:",
-                            type="primary", key="rpt_guardar",
+                            key="rpt_guardar",
                             disabled=en_kiosco())
         if guardar:
             exigir_escritura("Solo un administrador puede guardar la marca.")
             try:
-                _guardar_branding(cfg, {
+                br_mod.guardar_branding(cfg, {
                     "consultora": consultora.strip(),
                     "contacto": contacto.strip(),
                     "web": web.strip(),
                     "color_primario": color,
                 })
-                st.success("Marca guardada en el config del workspace.")
+                # El exito se guarda como flag: un st.success aqui desapareceria
+                # con el rerun antes de que el usuario lo viera.
+                st.session_state["rpt_marca_guardada"] = True
                 st.cache_resource.clear()
                 st.rerun()
             except Exception as e:  # noqa: BLE001
-                st.error(f"No se pudo guardar: {e}")
+                c.mensaje_error("No pudimos guardar la marca.",
+                                detalle=f"{type(e).__name__}: {e}")
 
-    st.markdown("**Generar reporte**")
+    st.header("Nuevo reporte", icon=":material/auto_awesome:")
     with st.container(border=True):
         tipos = [catalogo.TODOS] + [r["clave"] for r in catalogo.REPORTES]
         col_g1, col_g2, col_g3 = st.columns([2, 2, 1])
@@ -156,10 +140,10 @@ def principal():
                 "Tipo de reporte", tipos,
                 format_func=lambda t: "Todos los reportes" if t == catalogo.TODOS
                 else por_clave(t)["titulo"],
-                key="rpt_tipo", help="'Todos' genera los 5 reportes del catalogo.",
+                key="rpt_tipo", help="'Todos' genera los 5 reportes del catálogo.",
             )
         with col_g2:
-            ocasion = st.text_input("Ocasion (portada)", value=ocasion_def,
+            ocasion = st.text_input("Ocasión (portada)", value=ocasion_def,
                                     key="rpt_ocasion_gen",
                                     placeholder="Reporte mensual",
                                     help="Etiqueta impresa en la portada.")
@@ -176,14 +160,18 @@ def principal():
             st.caption(por_clave(tipo)["descripcion"])
 
         if generar:
-            with st.spinner("Calculando analisis, predicciones y armando el documento..."):
+            with st.spinner("Calculando análisis y predicciones, y armando el documento…"):
                 try:
                     rutas = _generar(cfg, data, tipo, ocasion.strip())
                 except Exception as e:  # noqa: BLE001
-                    st.error(f"Fallo la generacion: {e}")
+                    c.mensaje_error("No pudimos generar el reporte.",
+                                    detalle=f"{type(e).__name__}: {e}")
                     rutas = []
             if rutas:
-                st.success(f"Reporte(s) generado(s): {len(rutas)}")
+                n = len(rutas)
+                c.confirmacion_exito(
+                    f"Generamos {c.miles(n)} {'reporte' if n == 1 else 'reportes'}. "
+                    f"{'Está' if n == 1 else 'Están'} en la vista previa y en el historial.")
                 st.session_state["ultimo_reporte"] = rutas[-1]
 
     # ------------------------------------------------------------------
@@ -199,12 +187,12 @@ def principal():
     # ------------------------------------------------------------------
     #  Historial de reportes generados en este workspace
     # ------------------------------------------------------------------
-    st.markdown("**Reportes generados**")
+    st.header("Reportes generados", icon=":material/history:")
     generados = listar_generados(cfg)
     if not generados:
-        c.vacio("Aun no hay reportes de este workspace.",
+        c.vacio("Aún no hay reportes de este workspace.",
                 icono=":material/history:",
-                detalle="Genera el primero con el boton de arriba o via CLI: "
+                detalle="Genera el primero con el botón de arriba o desde la terminal: "
                         "`python main.py reporte generar --tipo todos`.")
         return
 
@@ -227,9 +215,9 @@ def principal():
                         st.session_state["ultimo_reporte"] = g["archivo"]
                         st.rerun()
                 st.divider()
-    st.caption(":material/lightbulb: Automatiza con el CLI: "
+    st.caption(":material/lightbulb: Automatízalo desde la terminal: "
                "`python main.py reporte generar --tipo todos --periodo 'Reporte mensual'` "
-               "y un cron/`crontab` para entregar reportes periodicos.")
+               "y programa un cron que los entregue periódicamente.")
 
 
 if __name__ == "__main__":

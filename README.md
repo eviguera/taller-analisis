@@ -16,47 +16,82 @@ inventario) en decisiones. Incluye analisis por cliente y por unidad, prediccion
 
 ## Estructura
 
+Arquitectura hexagonal: el núcleo (`src/puertos`, `src/aplicacion`, `src/core`)
+no depende de ni Streamlit, ni FastAPI, ni de un motor de base de datos
+concreto. Cada entrada (UI, API, CLI) y cada salida (almacenamiento) es un
+adaptador intercambiable.
+
 ```
 taller-analisis/
-├── data/                    # Archivos CSV con los datos del taller
-│   ├── clientes.csv         # id, nombre, telefono, email, fecha_registro
-│   ├── vehiculos.csv        # id, cliente_id, marca, modelo, anio, placa, color, kilometraje
-│   ├── servicios.csv        # id, nombre, precio_base, tiempo_estimado_min
-│   ├── facturas.csv         # id, cliente_id, vehiculo_id, fecha, total, descuento, estado, detalles
-│   └── inventario.csv       # id, producto, categoria, precio_costo, precio_venta, stock_actual, stock_minimo
+├── data/                    # Datos de ejemplo (CSV/SAV) + almacen y cache
+├── config/                  # config.yaml y usuarios.yaml (por workspace)
 ├── src/
-│   ├── data_loader.py       # Carga y limpieza de datos
-│   ├── analyzer.py          # Analisis exploratorio (KPIs, RFM, estacionalidad)
-│   ├── negocio.py           # Unidad economica de GIRO y ROI (pitch de inversion)
-│   ├── predictions.py       # Modelos de prediccion
-│   ├── model_registry.py    # Persistencia de modelos (joblib) por empresa
-│   ├── recomendaciones.py   # Giro Recomienda: next best action + mantenimiento
-│   ├── alerts.py            # Motor de alertas de negocio (+ reporte y email)
-│   ├── workspaces.py        # Multiempresa: workspaces aislados por carpeta
-│   ├── simulador.py         # Simulador what-if (escenarios 12m + EBITDA)
-│   ├── reporting/           # GIRO Reportes: motor de reportes white-label
-│   │   ├── catalogo.py      # Tipos de reporte (resumen/ventas/clientes/...)
-│   │   ├── branding.py      # Marca del cliente y del reventor (colores, logo)
-│   │   ├── insights.py      # Lectura estrategica automatica (reglas)
-│   │   ├── secciones.py     # Renderers HTML: KPIs, graficos, tablas
-│   │   └── engine.py        # GeneradorReportes: ensambla HTML + PDF/email
-│   ├── core/                # Config, pipeline ETL y hechos relacionales
+│   ├── puertos/             # Interfaces del hexágono
+│   │   ├── almacen.py       # PuertoAlmacen (consulta, ETL, estructura)
+│   │   ├── modelos.py       # PuertoRegistroModelos (persistencia ML)
+│   │   └── carga.py         # PuertoCarga + CargaResultado (lectores)
+│   ├── aplicacion/          # Casos de uso: SIN streamlit, SIN motor concreto
+│   │   └── almacen.py       # firma, sincronizar, estructura, vista, consulta
+│   ├── core/                # Núcleo del dominio
+│   │   ├── pipeline.py      # ETL (procesar_etl, load_all)
 │   │   ├── hechos.py        # Tabla de hechos factura_detalle + demanda real
-│   │   ├── conector_sql.py  # Conectores ERP/SQL (sqlite, duckdb, csv, url)
-│   │   └── templates.py     # Plantillas de vertical (7 sectores)
-│   ├── storage/             # DuckDB: esquema core/analitica y vistas SQL
-│   └── reports.py           # Generacion de reportes HTML (legacy)
-├── ui/
+│   │   ├── auth.py          # Usuarios, roles, sesiones, workspaces
+│   │   ├── conector_sql.py  # Conectores ERP/SQL + warehouse multi-DB
+│   │   └── config.py        # AppConfig (clave = workspace)
+│   ├── storage/             # Adaptador de SALIDA (PuertoAlmacen)
+│   │   ├── store.py         # DataStore (DuckDB embebido, el defecto)
+│   │   ├── postgres.py      # AlmacenPostgres (opt-in, una base por workspace)
+│   │   ├── dialecto.py      # SQL dialecto DuckDB/Postgres
+│   │   └── schema.py        # Esquema core/analitica y vistas
+│   ├── api/                 # Adaptador de ENTRADA HTTP (FastAPI)
+│   │   ├── app.py           # crear_app() — uvicorn --factory
+│   │   ├── rutas.py         # /api/salud, estado, vistas, consulta, empresas
+│   │   ├── deps.py          # Sesión, permisos, aislamiento por workspace
+│   │   └── esquemas.py      # Modelos pydantic de respuesta
+│   ├── loaders/             # csv / excel / parquet / pspp + factory
+│   ├── data_loader.py       # get_store(): ÚNICO punto de decisión de motor
+│   ├── formatos.py          # miles/moneda compartidos (UI, reportes, CLI)
+│   ├── analyzer.py          # Análisis exploratorio (KPIs, RFM, estacionalidad)
+│   ├── predictions.py       # Modelos de predicción (registro por workspace)
+│   ├── model_registry.py    # Persistencia de modelos (joblib) por empresa
+│   ├── recomendaciones.py   # Giro Recomienda: next best action
+│   ├── alerts.py            # Motor de alertas de negocio (+ reporte y email)
+│   ├── negocio.py           # Unidad económica de GIRO y ROI
+│   ├── simulador.py         # Simulador de escenarios (12m + EBITDA)
+│   ├── workspaces.py        # Multiempresa: workspaces aislados por carpeta
+│   └── reporting/           # GIRO Reportes: motor white-label (HTML)
+├── ui/                      # Adaptador de ENTRADA Streamlit
+│   ├── app.py               # Shell (barra, navegación, permisos)
+│   ├── context.py           # Adaptador fino: delega en src.aplicacion
+│   ├── components.py        # Wrappers (kpi_grid, panel, vacio, badge, ...)
 │   ├── theme.py             # Tema de marca por workspace (colores + CSS)
-│   ├── pages/simulador.py   # Pagina del simulador what-if
-│   └── pages/reportes.py    # Pagina de reportes ejecutivos white-label
-├── dashboard.py             # Dashboard web interactivo (Streamlit)
-├── landing.py               # Landing publica de ventas (demo en kiosco)
-├── docs/pitch.md            # Pitch de inversion 1 pagina (startup)
-├── generate_data.py         # Genera datos de ejemplo (opcional)
-├── main.py                  # Interfaz de linea de comandos
-└── reports/                 # Reportes HTML generados (por workspace y tipo)
+│   └── pages/               # 12 páginas del dashboard
+├── dashboard.py             # Entrada 1: dashboard (Streamlit :8501)
+├── landing.py               # Entrada 2: landing pública (Streamlit :8502)
+├── main.py                  # Entrada 3: CLI
+│                            # (la API HTTP es la entrada 4, :8503)
+├── entrypoint.sh            # Contenedor: los 3 procesos + healthchecks
+└── tests/                   # unittest de la librería estándar
 ```
+
+### Dependencias entre capas
+
+```
+entradas (ui/ · src/api/ · main.py)
+        │  solo llaman a…
+        ▼
+src/aplicacion  ──usa──►  src/puertos (interfaces)
+        │                       ▲
+        │                       │ implementan
+        ▼                       │
+src/core (dominio, ETL)    src/storage (DataStore · AlmacenPostgres)
+                                  ▲
+                                  │ decide get_store() en src/data_loader.py
+```
+
+Regla: `src/aplicacion` no importa `streamlit`, `fastapi` ni `duckdb` (hay
+tests que lo garantizan), y todo acceso al almacen pasa por `get_store()`.
+
 
 ## Uso
 
@@ -98,6 +133,51 @@ streamlit run landing.py --server.port 8502
 La landing presenta producto, módulos y pricing, con CTA que abre la demo de la
 app en modo kiosco. Ideal para desplegar gratis en HF Spaces o Community Cloud
 (entry file: `landing.py` o `dashboard.py`).
+
+### 1c. API HTTP (FastAPI)
+
+```bash
+# En local (el venv del repo lleva fastapi y uvicorn):
+uvicorn --factory src.api.app:crear_app --port 8503
+# o:
+python -m src.api.app
+```
+
+Sirve el mismo núcleo que el dashboard: mismos casos de uso de
+`src/aplicacion`, mismos permisos y el mismo aislamiento por workspace.
+
+| Endpoint | Auth | Qué hace |
+|---|---|---|
+| `GET /api/salud` | no | Salud del servicio (único público, no toca datos) |
+| `GET /api/estado` | sí | Radiografía analítica del workspace (KPIs + alertas) |
+| `GET /api/vistas` · `GET /api/vistas/{nombre}` | sí | Catálogo y datos de las vistas analíticas |
+| `POST /api/consulta` | admin | SQL de solo lectura sobre el workspace |
+| `GET /api/empresas` | sí | Workspaces visibles para la sesión |
+
+La sesión llega por `Authorization: Bearer <token>` o por cookie; sin sesión
+(respuesta 401), y `?workspace=` nunca saca al usuario de su propio workspace.
+Documentación interactiva en `http://localhost:8503/docs`.
+
+### 1d. Motor de almacen: DuckDB (defecto) u Postgres (opt-in)
+
+El almacen lo decide **una sola variable**, `GIRO_ALMACEN_MOTOR`:
+
+```bash
+# Defecto: DuckDB embebido, un fichero por workspace, un solo contenedor.
+unset GIRO_ALMACEN_MOTOR
+
+# Opt-in: Postgres (una base de datos POR workspace, equivalente al .duckdb).
+export GIRO_ALMACEN_MOTOR=postgres
+export GIRO_PG_HOST=127.0.0.1 GIRO_PG_PORT=5432
+export GIRO_PG_USER=giro     GIRO_PG_PASSWORD=...
+export GIRO_PG_DBPREFIX=giro # el workspace "demo" vive en giro_demo
+```
+
+Cada workspace necesita su base creada una vez (`giro_<clave>`) — es la
+unidad de aislamiento: si dos workspaces compartieran base, el ETL de uno
+(`DROP TABLE` + `CREATE`) borraría las tablas del otro. Ningún código de
+negocio sabe qué motor hay detrás: pide un `PuertoAlmacen` y `get_store()`
+en `src/data_loader.py` lo resuelve.
 
 ### 2. Linea de comandos
 

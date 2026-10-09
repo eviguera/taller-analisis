@@ -47,13 +47,18 @@ def _config(args):
 
 
 def _formato(valor, dec=0):
-    """Formatea con punto como separador de miles (es-CL)."""
-    return f"{valor:,.{dec}f}".replace(",", ".")
+    """Formatea con punto como separador de miles (es-CL).
+
+    Delegado en ``src.formatos``: la CLI no debe importar la UI para
+    pintar un numero.
+    """
+    from src.formatos import miles
+    return miles(valor, dec)
 
 
 def _moneda(valor, cfg):
-    from ui.components import moneda as _m
-    return _m(valor, cfg.moneda)
+    from src.formatos import moneda
+    return moneda(valor, cfg.moneda)
 
 
 def cmd_resumen(args):
@@ -225,12 +230,12 @@ def cmd_exportar(args):
             continue
         _exportar_archivo(df, out / nombre, args.formato)
 
-    # Vista analitica del almacen DuckDB (Idea 1): ademas de los datasets,
+    # Vistas analiticas del almacen (Idea 1): ademas de los datasets,
     # se exportan las agregaciones consumidas por los paneles.
     if todos:
         try:
-            from src.storage.store import DataStore
-            store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=False)
+            from src.data_loader import get_store
+            store = get_store(cfg, usar_cache=False)
             try:
                 for vista in VISTAS_ANALITICA:
                     try:

@@ -10,7 +10,53 @@ from src.alerts import evaluar_alertas, resumen_alertas, generar_reporte_alertas
 COLOR = {"critica": "rojo", "media": "amarillo", "baja": "azul"}
 
 
+def _css_estructura() -> None:
+    """Reparaciones estructurales de accesibilidad de la pagina.
+
+    Foco visible explicito, targets de accion de 44px y prosa ancha a 65ch
+    (los detalles de cada alerta son frases largas). Va en CSS porque
+    Streamlit no expone esos ajustes como widgets; el salto al contenido
+    (skip-link) depende del shell de la app, no de esta pantalla.
+    """
+    try:
+        oscuro = st.context.theme.type == "dark"
+    except Exception:  # noqa: BLE001 (st.context fuera de runtime: se asume claro)
+        oscuro = False
+    contorno = "#60a5fa" if oscuro else "#2563eb"
+    st.markdown(
+        f"""
+<style>
+/* Foco visible explicito en todo lo interactivo (AA). */
+a:focus-visible, button:focus-visible, input:focus-visible,
+textarea:focus-visible, select:focus-visible, [role="tab"]:focus-visible {{
+    outline: 3px solid {contorno};
+    outline-offset: 2px;
+}}
+/* Targets de accion >= 44px: botones y descargas. */
+[data-testid="stButton"] button,
+[data-testid="stDownloadButton"] button,
+[data-testid="stFormSubmitButton"] button {{
+    min-height: 44px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}}
+[data-testid="stButton"] button:hover:not(:disabled),
+[data-testid="stDownloadButton"] button:hover,
+[data-testid="stFormSubmitButton"] button:hover {{
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+}}
+/* Prosa larga a 65ch; los graficos van a todo el ancho. */
+[data-testid="stMarkdownContainer"] p {{
+    max-width: 65ch;
+}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def principal():
+    _css_estructura()
     cfg, data, analyzer, predictor = obtener_estado()
 
     c.cabecera(
@@ -23,10 +69,10 @@ def principal():
     res = resumen_alertas(alertas)
 
     c.kpi_grid([
-        ("Alertas activas", f"{res['total']}", None, None, "Reglas que se dispararon"),
-        ("Criticas", f"{res['critica']}", None, None, "Requieren accion inmediata"),
-        ("Medias", f"{res['media']}", None, None, "Requieren seguimiento"),
-        ("Tipos distintos", f"{len(res['por_tipo'])}", None, None,
+        ("Alertas activas", c.miles(res['total']), None, None, "Reglas que se dispararon"),
+        ("Criticas", c.miles(res['critica']), None, None, "Requieren accion inmediata"),
+        ("Medias", c.miles(res['media']), None, None, "Requieren seguimiento"),
+        ("Tipos distintos", c.miles(len(res['por_tipo'])), None, None,
          "Reglas con al menos una alerta"),
     ])
     if res["por_tipo"]:
@@ -53,10 +99,13 @@ def principal():
     st.markdown("### Reporte y notificacion")
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
-        if st.button("Generar reporte HTML", icon=":material/description:",
-                     disabled=en_kiosco()):
-            ruta = generar_reporte_alertas(cfg, data, alertas)
-            st.success(f"Reporte generado en `{ruta.name}`")
+        # Unica accion primaria de la pantalla: generar el reporte.
+        if st.button("Generar reporte HTML", type="primary",
+                     icon=":material/description:", disabled=en_kiosco()):
+            with st.status("Generando reporte…", expanded=False) as estado:
+                ruta = generar_reporte_alertas(cfg, data, alertas)
+            estado.update(label="Reporte listo", state="complete", expanded=False)
+            st.success(f"Reporte generado: `{ruta.name}`. Descárgalo abajo.")
             with open(ruta, "rb") as fh:
                 st.download_button(
                     "Descargar reporte", fh.read(),
@@ -68,15 +117,19 @@ def principal():
             st.caption("Modo presentacion: el envio se hace fuera del kiosco.")
         if st.button("Enviar por email", icon=":material/send:", disabled=en_kiosco()):
             exigir_escritura("Solo un administrador puede enviar alertas por email.")
-            envio = enviar_email(
-                cfg,
-                f"[GIRO] Alertas de {cfg.negocio_nombre}",
-                _html_alerta(alertas, cfg),
-            )
+            with st.spinner("Enviando alertas por email…"):
+                envio = enviar_email(
+                    cfg,
+                    f"[GIRO] Alertas de {cfg.negocio_nombre}",
+                    _html_alerta(alertas, cfg),
+                )
             if envio:
                 st.success("Alertas enviadas por email.")
             else:
-                st.info("SMTP no configurado: revisa `alertas.smtp` y la variable de entorno.")
+                st.error(
+                    "No se pudo enviar el email. Revisa la configuración "
+                    "`alertas.smtp` y las credenciales SMTP del entorno."
+                )
 
 
 def _html_alerta(alertas, cfg):

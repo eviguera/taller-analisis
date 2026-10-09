@@ -322,11 +322,15 @@ def ejecutar_conectores(cfg: AppConfig, ya_cargados: Optional[set] = None):
 
 
 def sincronizar_conectores(cfg: AppConfig, store=None) -> List[dict]:
-    """Trae los conectores al almacén DuckDB y devuelve el resumen por conector."""
-    from ..storage import DataStore
+    """Trae los conectores al almacen y devuelve el resumen por conector.
+
+    El almacen lo decide ``get_store`` (DuckDB o Postgres); se pasa el
+    llamador cuando ya tiene uno abierto para no reconectar.
+    """
+    from ..data_loader import get_store
     cerrar = store is None
     if store is None:
-        store = DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cfg.usar_cache)
+        store = get_store(cfg)
     resumen: List[dict] = []
     try:
         datos, errores = ejecutar_conectores(cfg)

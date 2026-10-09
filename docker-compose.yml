@@ -1,10 +1,11 @@
-# Paquete GIRO (dashboard + landing) para venta / consultoria.
+# Paquete GIRO (dashboard + landing + API) para venta / consultoria.
 #
 # Uso:
 #   export GIRO_AUTH_SECRET="$(openssl rand -hex 32)"
 #   docker compose up -d --build
 #   abrir  → dashboard http://localhost:8501  (crea el primer usuario admin)
 #           landing  http://localhost:8502/?kiosco=1
+#           API      http://localhost:8503/api/salud
 #
 # El contenedor escucha en 0.0.0.0, por lo que la app EXIGE autenticacion.
 # Si no defines GIRO_AUTH_SECRET se genera y persiste uno dentro del
@@ -23,10 +24,18 @@ services:
     ports:
       - "8501:8501"   # dashboard analitico
       - "8502:8502"   # landing de ventas
+      - "8503:8503"   # API HTTP (JSON)
     environment:
       GIRO_DASH_PORT: "8501"
       GIRO_LANDING_PORT: "8502"
+      GIRO_API_PORT: "8503"
+      # La API escucha en todas las interfaces del contenedor. Con esto
+      # detecta que esta expuesta y no admite GIRO_AUTH=0 (deps.api_expuesta).
+      GIRO_API_HOST: "0.0.0.0"
       GIRO_DEMO_URL: "http://localhost:8501/?kiosco=1"
+      # OJO: la API NO resuelve la config con workspaces.config_actual, que
+      # miraria esta variable primero y fijaria 'principal' para todos los
+      # clientes. Sirve al dashboard y al selector de empresa.
       GIRO_WORKSPACE: "principal"
       # Firma de las cookies de sesion. Sin valor, se genera una al vuelo.
       GIRO_AUTH_SECRET: "${GIRO_AUTH_SECRET:-}"
@@ -40,7 +49,7 @@ services:
       - ./config/usuarios.yaml:/app/config/usuarios.yaml
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import os, urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (os.environ.get('GIRO_DASH_PORT','8501'), os.environ.get('GIRO_LANDING_PORT','8502'))]"]
+             "import os, urllib.request; [urllib.request.urlopen(f'http://127.0.0.1:{p}/_stcore/health', timeout=3) for p in (os.environ.get('GIRO_DASH_PORT','8501'), os.environ.get('GIRO_LANDING_PORT','8502'))]; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('GIRO_API_PORT','8503') + '/api/salud', timeout=3)"]
       interval: 30s
       timeout: 5s
       start_period: 90s

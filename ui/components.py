@@ -16,6 +16,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# Formato de numeros/moneda: una sola implementacion, en el nucleo. El CLI y
+# los reportes usan la misma; aqui solo se reexporta para que las paginas
+# sigan llamando a ``c.miles``/``c.moneda``.
+from src.formatos import (
+    formato_archivo as _f_formato_archivo,
+    formato_moneda as _f_formato_moneda,
+    miles as _f_miles,
+    moneda as _f_moneda,
+)
+
 # ------------------------------------------------------------------
 #  Paleta suave: azul, gris y verde (sincronizada con config.toml)
 # ------------------------------------------------------------------
@@ -52,24 +62,23 @@ DIAS_ES = {
 # ------------------------------------------------------------------
 
 def miles(valor, decimales=0):
-    """Formatea un numero con punto como separador de miles (es-CL)."""
-    return f"{valor:,.{decimales}f}".replace(",", ".")
+    """Numero con separador de miles (es-CL)."""
+    return _f_miles(valor, decimales)
 
 
 def moneda(valor, moneda="MXN"):
-    simbolos = {"MXN": "$", "USD": "$", "EUR": "€", "CLP": "$", "COP": "$"}
-    s = simbolos.get(moneda, "$")
-    return f"{s}{miles(valor)}"
+    """Importe con simbolo.
+
+    El default ``MXN`` se mantiene por compatibilidad con las llamadas
+    existentes; ``MXN`` y ``CLP`` comparten simbolo, asi que la salida no
+    cambia. La logica vive en ``src.formatos``.
+    """
+    return _f_moneda(valor, moneda)
 
 
 def formato_moneda(moneda="CLP"):
-    """Formato de columna numerica para `column_config` con la moneda del cfg.
-
-    Centraliza el simbolo: las tablas no deben hardcodear ``$`` si el
-    workspace esta en EUR.
-    """
-    simbolos = {"MXN": "$", "USD": "$", "EUR": "€", "CLP": "$", "COP": "$"}
-    return f"{simbolos.get(moneda, '$')}#,##0"
+    """Formato de columna numerica para `column_config` con la moneda del cfg."""
+    return _f_formato_moneda(moneda)
 
 
 def _es_oscuro() -> bool:
@@ -99,7 +108,8 @@ def cabecera(titulo, subtitulo=None, icono=None, chips=None):
 
 
 def titulo_seccion(titulo, subtitulo=None, icono=None):
-    st.markdown(f"### {icono + ' ' if icono else ''}{titulo}")
+    """Seccion de pagina: h2 (bajo el h1 de ``cabecera``, sin saltar nivel)."""
+    st.markdown(f"## {icono + ' ' if icono else ''}{titulo}")
     if subtitulo:
         st.caption(subtitulo)
 
@@ -200,13 +210,8 @@ def vacio_con_cta(mensaje, cta, icono=":material/info:", on_click=None,
 # ------------------------------------------------------------------
 
 def formato_archivo(fmt):
-    """Etiqueta de formato para una celda de tabla (texto plano).
-
-    El texto de una celda de ``st.dataframe`` se muestra literal: ahi no
-    entra HTML ni markdown, asi que un chip <span> se veria como codigo.
-    Para badges con color usar :func:`badge` en el flujo markdown.
-    """
-    return str(fmt or "?").upper()
+    """Etiqueta de formato para una celda de tabla (texto plano)."""
+    return _f_formato_archivo(fmt)
 
 
 def badge(texto, tipo="info"):

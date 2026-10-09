@@ -17,9 +17,14 @@ from ui.context import (cargar_datos, exigir, exigir_escritura, obtener_config,
                         obtener_estado, sesion)
 from src.core.calidad import resumen as resumen_calidad
 
-# Cuota por archivo en la subida: sin ella un usuario autenticado puede
-# llenar el disco del contenedor, que todos los tenants comparten.
+# Cuota por archivo en la subida: corta un fichero gigante. Va de la mano
+# con server.maxUploadSize (200 MB por defecto), asi que por si sola no
+# frena nada que el servidor no rechace ya.
 LIMITE_SUBIDA_BYTES = 200 * 1024 * 1024
+# Cuota acumulada del workspace: sin ella, N ficheros pequenos o subidas
+# repetidas llenarian el disco del contenedor, que todos los tenants
+# comparten. Es la que de verdad protege el disco compartido.
+CUOTA_WORKSPACE_BYTES = 1024 * 1024 * 1024
 
 EJEMPLOS_SQL = {
     "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
@@ -68,7 +73,116 @@ def _pestana(tab):
     return tab if tab is not None else contextlib.nullcontext()
 
 
+def _mismo_contenido(ruta: Path, contenido) -> bool:
+    """True si el fichero en disco ya es byte a byte el contenido subido.
+
+    Se compara por bloques: cargar un fichero de 200 MB entero en RAM solo
+    para descartar una reescritura seria mas caro que el propio guardado.
+    """
+    bloque = 1 << 20
+    with open(ruta, "rb") as f:
+        for inicio in range(0, len(contenido), bloque):
+            if f.read(bloque) != bytes(contenido[inicio:inicio + bloque]):
+                return False
+        return f.read(1) == b""
+
+
+def _guardar_subidas(subidos, destino_dir: Path, excluidos=frozenset()):
+    """Guarda las subidas en el workspace, solo si su contenido cambio.
+
+    El ``file_uploader`` conserva los ficheros mientras la pestana esta
+    abierta y el bloque que lo envuelve se re-ejecuta en cada rerun:
+    reescribirlos a ciegas movia el mtime de los originales, la firma de
+    ``cargar_datos`` cambiaba siempre y la cache se invalidaba a si misma
+    en bucle, recargando todo justo en la pantalla de importacion.
+
+    Devuelve ``(guardados, sin_cambios, por_archivo, por_cuota)``.
+    ``por_archivo`` corta un fichero mayor que el limite individual;
+    ``por_cuota`` frena el acumulado del directorio de datos del workspace
+    contra ``CUOTA_WORKSPACE_BYTES``. Los ficheros de ``excluidos`` (el
+    almacen DuckDB y su WAL) no cuentan en la cuota: son derivados, no los
+    sube nadie, y comerian la cuota del tenant sin motivo.
+    """
+    destino_dir = Path(destino_dir)
+    destino_dir.mkdir(parents=True, exist_ok=True)
+    guardados = sin_cambios = por_archivo = por_cuota = 0
+    ocupado = sum(f.stat().st_size for f in destino_dir.iterdir()
+                  if f.is_file() and f.name not in excluidos)
+    for up in subidos:
+        tam = up.size or 0
+        if tam > LIMITE_SUBIDA_BYTES:
+            por_archivo += 1
+            continue
+        if ocupado + tam > CUOTA_WORKSPACE_BYTES:
+            por_cuota += 1
+            continue
+        # .name descarta cualquier ruta que traiga el nombre subido
+        # ("../../x"): el archivo tiene que caer dentro del directorio
+        # del workspace y de ningun otro sitio.
+        destino = destino_dir / Path(up.name).name
+        contenido = up.getbuffer()
+        if (destino.exists() and destino.stat().st_size == tam
+                and _mismo_contenido(destino, contenido)):
+            sin_cambios += 1
+            continue
+        destino.write_bytes(contenido)
+        ocupado += tam
+        guardados += 1
+    return guardados, sin_cambios, por_archivo, por_cuota
+
+
+def _plural(n: int) -> str:
+    """Sufijo plural (\"s\") para los recuentos del copy: evita \"1 archivo(s)\"."""
+    return "" if n == 1 else "s"
+
+
+def _css_estructura() -> None:
+    """Reparaciones estructurales de accesibilidad de la pagina.
+
+    Foco visible explicito, targets de accion de 44px y prosa ancha a 65ch.
+    Va en CSS porque Streamlit no expone esos ajustes como widgets; el
+    contraste lo hereda del tema (modo claro/oscuro) y el salto al contenido
+    (skip-link) depende del shell de la app, no de esta pantalla.
+    """
+    try:
+        oscuro = st.context.theme.type == "dark"
+    except Exception:  # noqa: BLE001 (st.context fuera de runtime: se asume claro)
+        oscuro = False
+    contorno = "#60a5fa" if oscuro else "#2563eb"
+    st.markdown(
+        f"""
+<style>
+/* Foco visible explicito en todo lo interactivo (AA). */
+a:focus-visible, button:focus-visible, input:focus-visible,
+textarea:focus-visible, select:focus-visible, [role="tab"]:focus-visible {{
+    outline: 3px solid {contorno};
+    outline-offset: 2px;
+}}
+/* Targets de accion >= 44px: botones, descargas y envios de formulario. */
+[data-testid="stButton"] button,
+[data-testid="stDownloadButton"] button,
+[data-testid="stFormSubmitButton"] button {{
+    min-height: 44px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}}
+[data-testid="stButton"] button:hover:not(:disabled),
+[data-testid="stDownloadButton"] button:hover,
+[data-testid="stFormSubmitButton"] button:hover {{
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+}}
+/* Prosa larga a 65ch; tablas y graficos van a todo el ancho. */
+[data-testid="stMarkdownContainer"] p {{
+    max-width: 65ch;
+}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def principal():
+    _css_estructura()
     cfg, data, analyzer, predictor = obtener_estado()
     c.cabecera(
         "Mis datos",
@@ -134,28 +248,30 @@ def principal():
                     exigir_escritura(
                         "Solo un administrador puede importar archivos en el workspace.")
                     destino_dir = Path(cfg.directorio_datos)
-                    destino_dir.mkdir(parents=True, exist_ok=True)
-                    guardados = 0
-                    excedidos = 0
-                    for up in subidos:
-                        # Sin cuota, cualquier usuario autenticado podia llenar el
-                        # disco del contenedor (compartido por todos los tenants)
-                        # enviando ficheros grandes o demasiados.
-                        if up.size and up.size > LIMITE_SUBIDA_BYTES:
-                            excedidos += 1
-                            continue
-                        # .name descarta cualquier ruta que traiga el nombre
-                        # subido ("../../x"): el archivo tiene que caer dentro
-                        # del directorio del workspace y de ningun otro sitio.
-                        (destino_dir / Path(up.name).name).write_bytes(up.getbuffer())
-                        guardados += 1
-                    if excedidos:
+                    # El almacen DuckDB y su WAL son derivados, no subidos:
+                    # no deben comerse la cuota del workspace.
+                    db = Path(cfg.db_path).name
+                    with st.spinner("Guardando archivos en tu directorio de datos…"):
+                        guardados, sin_cambios, por_archivo, por_cuota = _guardar_subidas(
+                            subidos, destino_dir, excluidos={db, f"{db}.wal", f"{db}.tmp"})
+                    if por_archivo:
                         st.warning(
-                            f"{excedidos} archivo(s) superan el limite de "
-                            f"{LIMITE_SUBIDA_BYTES // (1024 * 1024)} MB y no se guardaron.")
+                            f"Límite por archivo ({LIMITE_SUBIDA_BYTES // (1024 * 1024)} MB): "
+                            f"{c.miles(por_archivo)} archivo{_plural(por_archivo)} "
+                            f"no guardado{_plural(por_archivo)}.")
+                    if por_cuota:
+                        st.warning(
+                            f"Cuota del workspace ({CUOTA_WORKSPACE_BYTES // (1024 * 1024)} MB): "
+                            f"{c.miles(por_cuota)} archivo{_plural(por_cuota)} "
+                            f"no guardado{_plural(por_cuota)}.")
                     if guardados:
-                        st.success(f"{guardados} archivo(s) guardados en {destino_dir}")
+                        st.success(
+                            f"{c.miles(guardados)} archivo{_plural(guardados)} "
+                            f"guardado{_plural(guardados)} en tu directorio de datos.")
+                    elif sin_cambios:
+                        st.info("Los archivos subidos ya estaban guardados y sin cambios.")
 
+            st.space("small")
             st.markdown("**Archivos detectados**")
             archivos = escanear_directorio(directorio)
             if archivos:
@@ -174,8 +290,13 @@ def principal():
                     "Tamano (KB)": st.column_config.NumberColumn("Tamano (KB)"),
                 })
             else:
-                st.info("No se encontraron archivos de datos en el directorio.")
+                c.vacio(
+                    "No hay archivos de datos en este directorio.",
+                    icono=":material/folder_off:",
+                    detalle="Sube un CSV, Excel o .sav en «Subir archivos» y aparecerán aquí.",
+                )
 
+            st.space("small")
             st.markdown("**Mapeo automatico de datasets**")
             asignaciones = vincular_archivos_a_datasets(archivos, cfg)
             if asignaciones:
@@ -212,9 +333,9 @@ def principal():
                              "Tiempo completo del pipeline (carga + esquema + vistas)"),
                             ("Estructura DuckDB", f"{resultado.tiempo_estructura*1000:.0f} ms",
                              None, None, "Materializacion del esquema core y vistas analitica"),
-                            ("Tablas core", f"{len(resultado.estructura)}", None, None,
+                            ("Tablas core", f"{c.miles(len(resultado.estructura))}", None, None,
                              "Tablas normalizadas con claves primarias/foraneas"),
-                            ("Vistas analitica", f"{resultado.n_vistas}", None, None,
+                            ("Vistas analitica", f"{c.miles(resultado.n_vistas)}", None, None,
                              "Modelos dimensionales listos para los paneles"),
                         ])
                         if resultado.estructura:
@@ -230,6 +351,7 @@ def principal():
                         for nombre, err in resultado.errores.items():
                             st.write(f"- **{nombre}**: {err}")
 
+            st.space("small")
             st.markdown("**Descargar datos procesados**")
             datasets = list(data.keys())
             sel = st.pills(
@@ -240,21 +362,34 @@ def principal():
             if sel and not data.get(sel, pd.DataFrame()).empty:
                 c.descargar(data[sel], sel)
 
+            st.space("small")
             st.markdown("**Exportar a PSPP desde la interfaz**")
             if st.button("Exportar todos los datasets a .sav",
                          icon=":material/ios_share:",
-                         help="Genera archivos .sav en data/export/"):
+                         help="Genera los .sav en el subdirectorio export de tus datos."):
                 out = Path(cfg.directorio_datos) / "export"
                 out.mkdir(parents=True, exist_ok=True)
-                for nombre, df in data.items():
-                    if df.empty:
-                        continue
-                    try:
-                        exportar_sav(df, out / f"{nombre}.sav", label_archivo=f"{nombre} exportado")
-                    except Exception as e:  # noqa: BLE001
-                        st.warning(f"{nombre}: {e}")
-                st.success(f"Exportados a {out}")
+                exportados = 0
+                fallos = {}
+                with st.spinner("Exportando datasets a .sav…"):
+                    for nombre, df in data.items():
+                        if df.empty:
+                            continue
+                        try:
+                            exportar_sav(df, out / f"{nombre}.sav", label_archivo=f"{nombre} exportado")
+                            exportados += 1
+                        except Exception as e:  # noqa: BLE001
+                            fallos[nombre] = str(e)
+                for nombre, err in fallos.items():
+                    st.warning(f"{nombre}: no se pudo exportar ({err})")
+                if exportados:
+                    st.success(
+                        f"{c.miles(exportados)} dataset{_plural(exportados)} "
+                        f"exportado{_plural(exportados)} a `{out}`.")
+                elif not fallos:
+                    st.info("No hay datasets con datos que exportar.")
 
+            st.space("small")
             st.markdown("**Exportar analitica completa a PSPP**")
             st.caption("Incluye los datasets y las vistas analiticas "
                        "(ingresos por vehiculo, RFM, churn, demanda, ...) como .sav.")
@@ -294,7 +429,11 @@ def principal():
                                 name="objetos")
                             st.dataframe(esquema_total, width="stretch")
                         else:
-                            st.caption("Sin objetos registrados. Procesa el ETL primero.")
+                            c.vacio(
+                                "Aún no hay objetos en el almacén.",
+                                icono=":material/hub:",
+                                detalle="Procesa el ETL para crear las tablas y vistas.",
+                            )
                 with col2:
                     with c.panel("Objetos por esquema", "Estructura detallada",
                                  icono=":material/schema:"):
@@ -302,6 +441,7 @@ def principal():
 
                 vistas = catalogo[catalogo["tipo"] == "VIEW"]["objeto"].tolist() if not catalogo.empty else []
                 if vistas:
+                    st.space("small")
                     st.markdown("**Explorar vistas analiticas**")
                     vista = st.selectbox("Vista analitica", ["-- selecciona --"] + vistas,
                                          key="vista_analitica")
@@ -310,7 +450,11 @@ def principal():
                                      icono=":material/table_view:"):
                             st.dataframe(consultar_vista(vista), width="stretch", height=320)
             except Exception as e:  # noqa: BLE001
-                st.info(f"No hay almacen disponible todavia: {e}")
+                c.vacio(
+                    "Aún no hay almacén analítico.",
+                    icono=":material/storage:",
+                    detalle=f"Procesa el ETL en la pestaña «Procesar (ETL)». Detalle técnico: {e}",
+                )
 
     # ---------------------------------------------------------------
     #  PESTAÑA: CALIDAD DE DATOS
@@ -348,7 +492,12 @@ def principal():
                         st.markdown("**Vista previa**")
                         st.dataframe(df.head(10), width="stretch")
             else:
-                st.info("Procesa los datos primero para ver su calidad.")
+                c.vacio(
+                    "Aún no hay datos que revisar.",
+                    icono=":material/rule:",
+                    detalle="Procesa el ETL en la pestaña «Procesar (ETL)» para evaluar "
+                            "nulos, duplicados y tipos de columna.",
+                )
 
     # ---------------------------------------------------------------
     #  PESTAÑA: INTEGRACION PSPP
@@ -369,7 +518,7 @@ valores** (p. ej. `estado: 1=Pagada, 2=Pendiente`), de forma que el analisis
 muestra textos legibles en lugar de numeros.
             """)
 
-            st.markdown("#### Variables disponibles en la analitica")
+            st.markdown("### Variables disponibles en la analitica")
             st.markdown("""
 La vista **`analitica.ingresos_por_vehiculo`** agrega los ingresos por vehiculo:
 `marca`, `modelo`, `placa`, `anio`, `facturas`, `ingresos`, `ultima_visita`.
@@ -421,8 +570,12 @@ de la pestana *Procesar (ETL)*.
                     except Exception as e:  # noqa: BLE001
                         st.warning(f"- **{a.nombre}**: error al leer ({e})")
             else:
-                st.info("No hay archivos .sav/.zsav/.por en el directorio de datos. "
-                        "Sube uno o usa los de ejemplo (clientes.sav, facturas.sav).")
+                c.vacio(
+                    "No hay archivos .sav, .zsav o .por en el directorio de datos.",
+                    icono=":material/upload_file:",
+                    detalle="Sube uno con el botón de arriba o usa los de ejemplo: "
+                            "clientes.sav, facturas.sav.",
+                )
 
     # ---------------------------------------------------------------
     #  PESTAÑA: CONECTORES ERP/SQL (Fase 2)
@@ -475,8 +628,11 @@ de la pestana *Procesar (ETL)*.
                     for r in fallas:
                         st.warning(f":material/error: **{r['nombre']}**: {r['error']}")
             else:
-                st.info("Aun no hay conectores configurados. Crea un snapshot "
-                        "demo o agrega uno a mano abajo.")
+                c.vacio(
+                    "Aún no hay conectores configurados.",
+                    icono=":material/cable:",
+                    detalle="Crea un snapshot de prueba o registra uno a mano más abajo.",
+                )
 
             st.divider()
             st.markdown("**Prueba rapida: snapshot SQLite (simula exportacion del ERP)**")
@@ -538,7 +694,7 @@ de la pestana *Procesar (ETL)*.
                                                    type="primary", icon=":material/add:")
                 if enviar_con:
                     if not nom_con.strip() or not dataset_con:
-                        st.error("Nombre y dataset son obligatorios.")
+                        st.error("Escribe un nombre y elige el dataset destino.")
                     else:
                         nuevo = [{
                             "nombre": nom_con.strip(),
@@ -561,13 +717,16 @@ de la pestana *Procesar (ETL)*.
             from src.core.warehouse import sincronizar as _wh_sync
             from src.core.warehouse import ver as _wh_ver
             wh_dsn = st.text_input(
-                "DSN destino (SQLAlchemy)",
+                "URL de conexión al warehouse",
                 placeholder="postgresql://user:pass@host:5432/warehouse · "
                             "sqlite:///warehouse.sqlite",
                 key="wh_dsn")
             wh_c1, wh_c2 = st.columns(2)
             with wh_c1:
-                if st.button("Publicar en el warehouse", type="primary",
+                # Secundario: la primaria de esta pestaña es "Sincronizar
+                # conectores ahora" y el formulario de arriba; dos botones
+                # primarios seguidos compiten por el mismo viewport.
+                if st.button("Publicar en el warehouse",
                              icon=":material/cloud_upload:", disabled=not wh_dsn.strip()):
                     # El permiso se comprueba en la accion, no solo con
                     # ocultar la pestana (PERMISO_PUBLICAR_WAREHOUSE existia
@@ -589,7 +748,8 @@ de la pestana *Procesar (ETL)*.
                 if st.button("Ver tablas publicadas", icon=":material/database_search:",
                              disabled=not wh_dsn.strip()):
                     try:
-                        df_wh = _wh_ver(cfg, wh_dsn.strip())
+                        with st.spinner("Consultando las tablas publicadas…"):
+                            df_wh = _wh_ver(cfg, wh_dsn.strip())
                         if df_wh.empty:
                             st.info("No hay tablas GIRO en el warehouse destino.")
                         else:
@@ -603,8 +763,8 @@ de la pestana *Procesar (ETL)*.
     with _pestana(tab_sql):
         if tab_sql is not None and tab_sql.open:
             st.markdown("## Consultas SQL sobre tus datos (DuckDB)")
-            st.caption("Consulta todas las tablas en lenguaje SQL. "
-                       "Util para informacion avanzada y portatil.")
+            st.caption("Consulta las tablas del almacén en lenguaje SQL. "
+                       "Útil cuando necesitas un dato que los paneles no muestran.")
             st.info(
                 "Modo **solo lectura**: ejecuta una sentencia `SELECT` por vez. "
                 "Las escrituras y el acceso a archivos o a la red estan "
@@ -625,8 +785,11 @@ de la pestana *Procesar (ETL)*.
             if enviar:
                 from ui.context import consulta_sql
                 try:
-                    df_res = consulta_sql(consulta)
+                    with st.spinner("Ejecutando consulta…"):
+                        df_res = consulta_sql(consulta)
                     st.dataframe(df_res, width="stretch", height=300)
+                    st.caption(f"{c.miles(len(df_res))} filas · "
+                               f"{c.miles(len(df_res.columns))} columnas")
                 except Exception as e:  # noqa: BLE001
                     st.error(f"No se pudo ejecutar la consulta. Verifica la sintaxis SQL: {e}")
 
@@ -649,7 +812,7 @@ def _wizard_primer_uso():
         return
 
     with st.container(border=True):
-        st.markdown("### :material/rocket_launch: Comenzando con GIRO")
+        st.markdown("## :material/rocket_launch: Comenzando con GIRO")
         st.markdown(
             "Bienvenido. Para ver analisis y predicciones, primero cargamos "
             "los datos de tu negocio."
@@ -694,7 +857,8 @@ def _wizard_primer_uso():
             # Los archivos van al directorio de datos del workspace
             # activo, no al data/ de la raiz (regla 1: aislamiento).
             try:
-                destino = generar_ejemplos(cfg.clave)
+                with st.spinner("Generando datos de ejemplo…"):
+                    destino = generar_ejemplos(cfg.clave)
                 st.success(f"Datos de ejemplo generados en `{destino}`. Recarga la pagina.")
                 st.rerun()
             except Exception as e:  # noqa: BLE001

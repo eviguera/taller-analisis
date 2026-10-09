@@ -6,6 +6,9 @@ pero por debajo usa el catalogo, los cargadores plugin (CSV/Excel/PSPP) y DuckDB
 
 from __future__ import annotations
 
+import os
+import re
+
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -15,20 +18,19 @@ from .core.pipeline import load_all as pipeline_load_all, get_data_summary as pi
 from .loaders import get_loader
 from .workspaces import config_actual
 
-_CACHE_CONFIG = {}
-
+#: Motores aceptados para el almacen analitico (`PuertoAlmacen`).
+MOTOR_DUCKDB = "duckdb"
+MOTOR_POSTGRES = "postgres"
 
 def get_app_config():
-    """Configuracion global del workspace activo (con cache ligera).
+    """Configuracion global del workspace activo.
 
     Permite multiempresa via ``GIRO_WORKSPACE`` o el selector del dashboard:
-    cada workspace tiene su propio config, datos y almacen.
+    cada workspace tiene su propio config, datos y almacen. La resolucion es
+    barata y siempre fresca; no lleva cache propia (el cacheo vivo lo hace
+    ``st.cache_data`` en ``ui/context.py``, que si sabe del workspace).
     """
-    cfg = config_actual()
-    clave = cfg.clave or "principal"
-    if clave not in _CACHE_CONFIG:
-        _CACHE_CONFIG[clave] = cfg
-    return _CACHE_CONFIG[clave]
+    return config_actual()
 
 
 def load_all(data_dir: Optional[Path] = None, cfg=None) -> dict:
@@ -171,9 +173,91 @@ def get_data_summary(data: dict) -> dict:
     return pipeline_resumen(data)
 
 
-def get_store(cfg=None):
-    """Devuelve la capa de almacenamiento (DuckDB + cache) ya configurada."""
-    from .storage import DataStore
+def get_store(cfg=None, usar_cache: Optional[bool] = None):
+    """Devuelve el almacen del workspace, ya configurado.
+
+    Punto unico de decision del motor: el resto del sistema pide un
+    `PuertoAlmacen` y no sabe si hay DuckDB o Postgres detrás.
+
+    ``usar_cache`` solo tiene sentido en DuckDB (la capa de parquet de
+    ``DataStore``); en Postgres se ignora, porque ahi el almacen remoto ya
+    es la unica fuente. Se pasa como parametro opcional para que el ETL y
+    el CLI puedan pedir ``usar_cache=False`` sin saber que motor hay.
+    """
     if cfg is None:
         cfg = get_app_config()
-    return DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cfg.usar_cache)
+    if motor_almacen(cfg) == MOTOR_POSTGRES:
+        from .storage.postgres import AlmacenPostgres
+        try:
+            return AlmacenPostgres(dbname=dbname_postgres(cfg))
+        except Exception as e:  # noqa: BLE001 — se reenvia con contexto, no se traga
+            raise RuntimeError(
+                f"No se pudo conectar con Postgres para el workspace "
+                f"'{getattr(cfg, 'clave', '?')}': {e}\n"
+                "Si es la primera vez, cada workspace necesita su propia base "
+                "de datos: revisa GIRO_PG_* y GIRO_ALMACEN_MOTOR."
+            ) from e
+    from .storage import DataStore
+    cache = cfg.usar_cache if usar_cache is None else usar_cache
+    return DataStore(cfg.db_path, cfg.cache_dir, usar_cache=cache)
+
+
+def motor_almacen(cfg=None) -> str:
+    """Motor del almacen: ``GIRO_ALMACEN_MOTOR``, luego la config, luego DuckDB.
+
+    DuckDB embebido sigue siendo el defecto: es lo que hace que el producto
+    se levante en un unico contenedor sin servidor de base de datos.
+    Postgres es opt-in por entorno.
+    """
+    valor = os.environ.get("GIRO_ALMACEN_MOTOR", "").strip().lower()
+    if not valor and cfg is not None:
+        valor = str(getattr(cfg, "motor_almacen", "") or "").strip().lower()
+    valor = valor or MOTOR_DUCKDB
+    if valor in ("postgresql", "pg"):
+        return MOTOR_POSTGRES
+    if valor not in (MOTOR_DUCKDB, MOTOR_POSTGRES):
+        raise ValueError(
+            f"Motor de almacen desconocido: {valor!r}. "
+            f"Acepta '{MOTOR_DUCKDB}' o '{MOTOR_POSTGRES}'.")
+    return MOTOR_POSTGRES if valor == MOTOR_POSTGRES else MOTOR_DUCKDB
+
+
+def dbname_postgres(cfg, prefijo: Optional[str] = None) -> str:
+    """Base de datos de Postgres propia del workspace.
+
+    **La unidad de aislamiento es la base de datos** (regla 1), equivalente
+    al fichero ``.duckdb`` por workspace de DuckDB. Si dos workspaces
+    compartieran una, ``registrar_tabla`` (``DROP TABLE`` + ``CREATE``) de
+    uno borraria las tablas del otro, y como la firma de carga vive en
+    ``giro_meta`` dentro de la misma base, el primero creeria que sus datos
+    estan frescos y **leeria los del segundo**. Por eso el nombre se deriva
+    aqui, siempre, y no se acepta un ``dbname`` unico para todos.
+
+    El prefijo (``GIRO_PG_DBPREFIX``, por defecto ``giro``) permite que
+    varias instalaciones compartan servidor: el workspace ``demo`` vive en
+    ``giro_demo``. Es una variable distinta de ``GIRO_PG_DBNAME`` a
+    proposito: esa es la base a la que conecta ``AlmacenPostgres`` cuando
+    se construye a mano, y darle dos significados dejaria al operador sin
+    saber a donde se conecta.
+    """
+    clave = (getattr(cfg, "clave", "") or "").strip().lower()
+    if not clave:
+        raise ValueError(
+            "El workspace no tiene clave: no se puede derivar su base de "
+            "datos de Postgres sin riesgo de mezclar tenants.")
+
+    # La clave ya viene validada (``^[a-z0-9][a-z0-9_-]{0,63}$``) pero puede
+    # llevar '-', que no queremos en el nombre de base de datos.
+    base = re.sub(r"[^a-z0-9_]", "_", clave)
+    if prefijo is None:
+        prefijo = os.environ.get("GIRO_PG_DBPREFIX", "").strip().lower()
+    limpio = re.sub(r"[^a-z0-9_]", "_", prefijo or "giro").strip("_") or "giro"
+    nombre = f"{limpio}_{base}"
+
+    # Postgres trunca identificadores a 63 bytes: un nombre mas largo se
+    # silenciaria y dos workspaces largos podrian colisionar.
+    if len(nombre) > 63:
+        raise ValueError(
+            f"Nombre de base de datos demasiado largo ({len(nombre)} > 63): "
+            f"{nombre!r}. Acorta GIRO_PG_DBNAME o la clave del workspace.")
+    return nombre

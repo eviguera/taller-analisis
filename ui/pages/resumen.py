@@ -14,14 +14,14 @@ def _rango_desde_popover(df):
     fecha_max = df["fecha"].max().date()
     fecha_min = df["fecha"].min().date()
     presets = {
-        "Ultimo mes": 1, "Ultimos 3 meses": 3, "Ultimos 6 meses": 6,
-        "Ultimo ano": 12, "Todo": None,
+        "Último mes": 1, "Últimos 3 meses": 3, "Últimos 6 meses": 6,
+        "Último año": 12, "Todo": None,
     }
     modo = st.segmented_control(
-        "Periodo", list(presets) + ["Personalizado"], default="Ultimo ano",
+        "Periodo", list(presets) + ["Personalizado"], default="Último año",
         key="resumen_periodo", label_visibility="collapsed", width="stretch",
     )
-    modo = modo or "Ultimo ano"
+    modo = modo or "Último año"
 
     if modo == "Personalizado":
         col1, col2 = st.columns(2)
@@ -46,9 +46,9 @@ def principal():
     df = analyzer.df
     if df.empty or "fecha" not in df.columns:
         c.vacio(
-            "Sin datos de facturas para el resumen.",
+            "Aún no hay facturas para el resumen.",
             icono=":material/receipt_long:",
-            detalle="Importa tus facturas en la pagina 'Mis datos' y procesa el ETL.",
+            detalle="Importa tus facturas en la página 'Mis datos' y procesa el ETL.",
         )
         return
 
@@ -56,7 +56,7 @@ def principal():
     with col_titulo:
         c.cabecera(
             "Resumen general",
-            f"{cfg.negocio_nombre} · Panorama de ingresos, clientes y facturacion",
+            f"{cfg.negocio_nombre} · Panorama de ingresos, clientes y facturación",
             icono=":material/dashboard:",
         )
     with col_filtros:
@@ -69,7 +69,7 @@ def principal():
         c.vacio(
             "No hay datos en el rango de fechas seleccionado.",
             icono=":material/schedule:",
-            detalle="Prueba con un periodo mas amplio o sin filtros.",
+            detalle="Prueba con un periodo más amplio o sin filtros.",
         )
         return
 
@@ -104,10 +104,10 @@ def principal():
         ("Ingresos totales", c.moneda(total_ingresos, cfg.moneda), delta_ing,
          tendencia("ingresos"), "Ingresos acumulados en el periodo"),
         ("Facturas", c.miles(total_facturas), None, tendencia("facturas"),
-         "Numero de facturas emitidas"),
+         "Número de facturas emitidas"),
         ("Ticket promedio", c.moneda(ticket, cfg.moneda), None, tendencia("ticket"),
          "Ingreso promedio por factura"),
-        ("Clientes activos", f"{n_clientes}", None, None,
+        ("Clientes activos", c.miles(n_clientes), None, None,
          "Clientes distintos en el periodo"),
     ])
 
@@ -117,14 +117,14 @@ def principal():
 
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
-        with c.panel("Ingresos por mes", "Series mensuales de facturacion",
+        with c.panel("Ingresos por mes", "Series mensuales de facturación",
                      icono=":material/show_chart:"):
             c.mostrar_grafico(c.grafico_linea(
                 serie, "anio_mes", "ingresos",
                 etiquetas={"anio_mes": "Mes", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
     with col2:
-        with c.panel("Facturas por mes", "Volumen mensual de ordenes",
+        with c.panel("Facturas por mes", "Volumen mensual de órdenes",
                      icono=":material/bar_chart:"):
             c.mostrar_grafico(c.grafico_barras(
                 serie, "anio_mes", "facturas", color_cont="Blues",
@@ -135,7 +135,7 @@ def principal():
     est = analyzer.estacionalidad()
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
-        with c.panel("Ingresos por marca", "Marcas que mas aportan",
+        with c.panel("Ingresos por marca", "Marcas que más aportan",
                      icono=":material/directions_car:"):
             por_marca = filtrado.groupby("marca").agg(
                 ingresos=("total", "sum")).sort_values("ingresos", ascending=False).reset_index()
@@ -144,7 +144,7 @@ def principal():
                 etiquetas={"marca": "Marca", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
     with col2:
-        with c.panel("Estacionalidad por mes", "Patron anual de ingresos",
+        with c.panel("Estacionalidad por mes", "Patrón anual de ingresos",
                      icono=":material/calendar_month:"):
             mes_df = est["por_mes"].copy()
             mes_df["mes_nombre"] = mes_df["mes"].map(lambda m: c.MESES_ES[int(m) - 1])
@@ -155,16 +155,16 @@ def principal():
 
     col1, col2 = st.columns(2, vertical_alignment="center")
     with col1:
-        with c.panel("Ingresos por dia de la semana", "Cuando se concentra la demanda",
+        with c.panel("Ingresos por día de la semana", "Cuándo se concentra la demanda",
                      icono=":material/calendar_view_week:"):
             dia_df = est["por_dia_semana"].copy()
             dia_df["dia"] = dia_df["dia_semana"].map(c.DIAS_ES).fillna(dia_df["dia_semana"])
             c.mostrar_grafico(c.grafico_barras(
                 dia_df, "dia", "ingresos", color_cont="Reds",
-                etiquetas={"dia": "Dia", "ingresos": "Ingresos"}),
+                etiquetas={"dia": "Día", "ingresos": "Ingresos"}),
                 width="stretch", height="stretch")
     with col2:
-        with c.panel("Estado de facturas", "Distribucion por estado",
+        with c.panel("Estado de facturas", "Distribución por estado",
                      icono=":material/check_circle:"):
             estado_df = filtrado["estado"].value_counts().reset_index()
             estado_df.columns = ["Estado", "Cantidad"]

@@ -249,5 +249,88 @@ class TestPermisos(unittest.TestCase):
         self.assertFalse(demo.es_admin)
 
 
+class _Subida:
+    """Sustituto del objeto de ``st.file_uploader`` con lo que toca la logica."""
+
+    def __init__(self, nombre: str, contenido: bytes):
+        self.name = nombre
+        self._contenido = contenido
+        self.size = len(contenido)
+
+    def getbuffer(self):
+        return memoryview(self._contenido)
+
+
+class TestSubidaConCuota(unittest.TestCase):
+    """La subida de ``ui/pages/datos.py``: cuota, confinamiento y mtime.
+
+    El disco del contenedor es de todos los tenants, y el file_uploader
+    re-ejecuta su bloque en cada rerun: sin estas garantias se puede
+    llenar el disco y, ademas, la reescritura inmovil invalida la cache
+    de datos en bucle.
+    """
+
+    def setUp(self):
+        self.destino = Path(tempfile.mkdtemp(prefix="giro_subida_"))
+
+    def _guardar(self, subidos, excluidos=frozenset()):
+        from ui.pages.datos import _guardar_subidas
+        return _guardar_subidas(subidos, self.destino, excluidos=excluidos)
+
+    def test_escribe_lo_nuevo_y_cuenta_guardados(self):
+        guardados, sin_cambios, _, _ = self._guardar([_Subida("a.csv", b"x,y\n1,2\n")])
+        self.assertEqual((guardados, sin_cambios), (1, 0))
+        self.assertEqual((self.destino / "a.csv").read_bytes(), b"x,y\n1,2\n")
+
+    def test_lo_mismo_no_vuelve_a_escribirse(self):
+        # Regresion del hallazgo alto: reescribir en cada rerun movia el
+        # mtime y cambiaba la firma de cargar_datos sin cambiar nada.
+        self._guardar([_Subida("a.csv", b"x,y\n1,2\n")])
+        mtime = (self.destino / "a.csv").stat().st_mtime_ns
+        guardados, sin_cambios, _, _ = self._guardar([_Subida("a.csv", b"x,y\n1,2\n")])
+        self.assertEqual((guardados, sin_cambios), (0, 1))
+        self.assertEqual((self.destino / "a.csv").stat().st_mtime_ns, mtime)
+
+    def test_contenido_distinto_si_se_reescribe(self):
+        self._guardar([_Subida("a.csv", b"v1")])
+        guardados, sin_cambios, _, _ = self._guardar([_Subida("a.csv", b"v2")])
+        self.assertEqual((guardados, sin_cambios), (1, 0))
+        self.assertEqual((self.destino / "a.csv").read_bytes(), b"v2")
+
+    def test_mismo_tamano_pero_distinto_contenido(self):
+        self._guardar([_Subida("a.csv", b"aaaa")])
+        guardados, sin_cambios, _, _ = self._guardar([_Subida("a.csv", b"bbbb")])
+        self.assertEqual((guardados, sin_cambios), (1, 0))
+
+    def test_el_archivo_sobre_el_limite_no_se_guarda(self):
+        from ui.pages import datos
+        with mock.patch.object(datos, "LIMITE_SUBIDA_BYTES", 4):
+            guardados, _, por_archivo, _ = self._guardar([_Subida("g.csv", b"12345")])
+        self.assertEqual((guardados, por_archivo), (0, 1))
+        self.assertFalse((self.destino / "g.csv").exists())
+
+    def test_la_cuota_del_workspace_tambien_cuenta(self):
+        from ui.pages import datos
+        (self.destino / "viejo.csv").write_bytes(b"1234")
+        with mock.patch.object(datos, "CUOTA_WORKSPACE_BYTES", 5):
+            guardados, _, _, por_cuota = self._guardar([_Subida("nuevo.csv", b"12345")])
+        self.assertEqual((guardados, por_cuota), (0, 1))
+        self.assertFalse((self.destino / "nuevo.csv").exists())
+
+    def test_el_almacen_duckdb_no_come_la_cuota(self):
+        from ui.pages import datos
+        (self.destino / "almacen.duckdb").write_bytes(b"1234")
+        with mock.patch.object(datos, "CUOTA_WORKSPACE_BYTES", 5):
+            guardados, _, _, por_cuota = self._guardar(
+                [_Subida("n.csv", b"12")], excluidos={"almacen.duckdb"})
+        self.assertEqual((guardados, por_cuota), (1, 0))
+
+    def test_un_nombre_con_ruta_no_sale_del_workspace(self):
+        guardado, _, _, _ = self._guardar([_Subida("../../fuera.csv", b"x")])
+        self.assertEqual(guardado, 1)
+        self.assertTrue((self.destino / "fuera.csv").exists())
+        self.assertFalse((self.destino.parent / "fuera.csv").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

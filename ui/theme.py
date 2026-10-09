@@ -85,10 +85,16 @@ def _css_premium(oscuridad: bool) -> str:
     /* metricValueFontSize = 2.5rem fijo desborda cuando una fila de
        kpi_grid tiene muchas tarjetas (o el valor es largo). Aqui baja
        con el ancho disponible pero sin pasar de 2.5rem, y el valor se
-       parte en vez de salirse de la tarjeta. */
+       parte en vez de salirse de la tarjeta: el markdown interno de
+       stMetric monta el valor con truncate (white-space: nowrap), que
+       anula overflow-wrap, asi que hay que abrirlo a mano. */
     [data-testid="stMetricValue"] {{
         font-size: clamp(1.35rem, 1.1rem + 1vw, 2.5rem);
         line-height: 1.15;
+    }}
+    [data-testid="stMetricValue"] div,
+    [data-testid="stMetricValue"] span {{
+        white-space: normal !important;
         overflow-wrap: anywhere;
     }}
     [data-testid="stVerticalBlockBorderWrapper"] {{

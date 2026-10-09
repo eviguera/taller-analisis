@@ -8,6 +8,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from ..formatos import miles as _fmt_miles, moneda as _fmt_moneda
+
 MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
@@ -23,18 +25,16 @@ DIAS_SEMANA = {
 
 def miles(valor, decimales=0):
     """Formatea un numero con punto como separador de miles (es-CL)."""
-    try:
-        return f"{float(valor):,.{decimales}f}".replace(",", ".")
-    except (TypeError, ValueError):
-        return ""
+    return _fmt_miles(valor, decimales)
 
 
 def moneda(valor, moneda="CLP", decimales=0):
-    """Formatea un valor de forma monetaria segun la moneda del workspace."""
-    simbolo = {"MXN": "$", "USD": "$", "EUR": "€", "CLP": "$"}.get(moneda or "CLP", "$")
-    if moneda and moneda.upper() in ("CLP", "MXN", "COP", "CRC"):
-        decimales = 0
-    return f"{simbolo}{miles(valor, decimales)}"
+    """Formatea un valor de forma monetaria segun la moneda del workspace.
+
+    Delegado en ``src.formatos``: los reportes y el dashboard deben pintar
+    el mismo importe igual, no cada uno su version.
+    """
+    return _fmt_moneda(valor, moneda, decimales)
 
 
 def pct(valor, decimales=0):

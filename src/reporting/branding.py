@@ -111,3 +111,64 @@ def periodos_meses(cfg) -> list:
     if isinstance(p, list) and p:
         return [int(x) for x in p]
     return [3, 12]
+
+
+# Campos que se pueden persistir desde fuera. La lista es cerrada a proposito:
+# lo que se escribe aqui acaba en el config.yaml del tenant, y que cualquier
+# llamador meta claves arbitrarias en esa seccion es una puerta de entrada,
+# no una comodidad.
+CAMPOS_BRANDING = ("consultora", "contacto", "web", "slogan", "pie")
+COLORES_BRANDING = ("color_primario", "color_secundario", "color_acento")
+
+
+def guardar_branding(cfg, cambios: dict) -> dict:
+    """Persiste la marca white-label en el ``config.yaml`` del workspace.
+
+    Es la cara escritora de :func:`marca` y :func:`ocasion`: antes vivia en
+    la pagina de reportes, junto con su propia copia de la ruta del fichero,
+    de modo que el nucleo no podia guardar marca y otra pantalla podria
+    discrepar sobre donde vive el config. La ruta sale de
+    ``conector_sql.ruta_config_workspace``, que es la unica implementacion.
+
+    Los colores se validan **aqui**, no solo al leer: lo que se guarda en
+    disco es lo que despues acara interpolado dentro de un bloque CSS del
+    documento. Un valor no-hex se rechaza en vez de corromper el config.
+    """
+    import yaml
+
+    from ..core.conector_sql import ruta_config_workspace
+
+    desconocidos = [k for k in cambios
+                    if k not in CAMPOS_BRANDING and k not in COLORES_BRANDING]
+    if desconocidos:
+        raise ValueError(
+            "Campos de marca no reconocidos: " + ", ".join(sorted(desconocidos)))
+
+    ruta = ruta_config_workspace(cfg)
+    raw = yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+    reportes = dict(raw.get("reportes") or {})
+    branding = dict(reportes.get("branding") or {})
+
+    for campo in CAMPOS_BRANDING:
+        if campo in cambios:
+            valor = _limpiar(cambios[campo])
+            if valor is not None:
+                branding[campo] = valor
+
+    for color in COLORES_BRANDING:
+        if color in cambios:
+            candidato = _limpiar(cambios[color])
+            if candidato is None:
+                continue
+            if not _COLOR_HEX.match(candidato):
+                raise ValueError(
+                    f"Color de marca no valido: {candidato!r}. "
+                    "Usa el formato #RGB o #RRGGBB.")
+            branding[color] = candidato
+
+    reportes["branding"] = branding
+    raw["reportes"] = reportes
+    ruta.write_text(
+        yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+        encoding="utf-8")
+    return branding

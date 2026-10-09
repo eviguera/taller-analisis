@@ -11,11 +11,20 @@ from typing import Dict, List, Optional
 # llamador ponga su propio 0.60 y se desincronicen.
 UMBRAL_CHURN_DEFECTO = 0.60
 
+#: Ventana de analisis anual que comparten informe y simulador: cuantos meses
+#: de historial se miran atras y cuantos se proyectan hacia delante. Evita que
+#: el literal 12 se dispersara por tres ficheros (review #2, F1.2).
+VENTANA_MESES = 12
+
 
 def umbral_churn(alertas_cfg) -> float:
     """Umbral de churn efectivo: config del tenant o el defecto."""
     valor = (alertas_cfg or {}).get("churn_riesgo_umbral")
-    return UMBRAL_CHURN_DEFECTO if valor is None else float(valor)
+    # La cadena vacia llega desde un config.yaml escrito a mano y cuenta
+    # como "sin fijar": float("") reventaria al generar el reporte.
+    if valor is None or valor == "":
+        return UMBRAL_CHURN_DEFECTO
+    return float(valor)
 
 
 @dataclass

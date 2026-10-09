@@ -12,6 +12,7 @@ Estructura del almacen:
 
 from __future__ import annotations
 
+import logging
 import re
 
 import duckdb
@@ -19,15 +20,128 @@ import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .schema import (
-    ORDEN_CARGA,
-    SQL_ARRANQUE,
-    VISTAS_ANALITICA,
-    ddl_tabla_core,
-)
+from ..puertos import PuertoAlmacen
+from .dialecto import DialectoDuckDB
+from .schema import ORDEN_CARGA
+
+log = logging.getLogger("taller.storage")
 
 
-class DataStore:
+# ------------------------------------------------------------------
+#  Orquestacion del esquema, compartida por los adaptadores
+#  (DuckDB y PostgreSQL). El motor aporta `dialecto`, `ejecutar`,
+#  `insertar_dataframe`, `existe_tabla`, `tabla`, `registrar_tabla_core`
+#  y `vistas_fallidas`; el orden, el fallback sin claves y las vistas
+#  no destructivas viven aqui, una sola vez.
+# ------------------------------------------------------------------
+
+def registrar_tabla_core_compartido(almacen: "DataStore", nombre: str,
+                                    df: pd.DataFrame,
+                                    con_claves: bool = True) -> str:
+    """Materializa una tabla derivada en ``core`` con claves (o sin ellas).
+
+    Si la carga con claves falla (datos referencialmente imperfectos),
+    reintenta sin claves para no perder informacion. Si tambien falla,
+    lanza ``ValueError`` con todos los errores: ninguno se traga.
+    """
+    nombre = almacen._nombre_valido(nombre)
+    clean = almacen._saneada(df)
+    almacen.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
+    errores = []
+    for claves in (con_claves, False):
+        try:
+            almacen.ejecutar(
+                almacen.dialecto.ddl_tabla_core(nombre, clean, con_claves=claves))
+            almacen.insertar_dataframe("core", nombre, clean)
+            return nombre
+        except Exception as e:  # noqa: BLE001 — se recoge y se relanza abajo
+            errores.append(str(e))
+    raise ValueError(f"No se pudo registrar core.{nombre}: " + " | ".join(errores))
+
+
+def construir_estructura_compartida(almacen: "DataStore",
+                                    tablas: Dict[str, pd.DataFrame]) -> Dict[str, int]:
+    """Materializa ``core.*`` con claves y crea las vistas ``analitica.*``.
+
+    Devuelve ``{tabla: filas}`` del esquema core. Si la carga con claves
+    falla (datos referencialmente imperfectos), se reconstruye el esquema
+    completo sin claves para no perder informacion. Una vista que
+    referencie un objeto inexistente (p. ej. un workspace sin
+    factura_detalle) no aborta el ETL: se registra en
+    ``almacen.vistas_fallidas`` y se continua con las demas.
+    """
+    dialecto = almacen.dialecto
+    almacen.ejecutar(dialecto.sql_arranque())
+    # Es dependiente (FK hacia facturas/clientes): se elimina primero.
+    almacen.ejecutar('DROP TABLE IF EXISTS core."factura_detalle" CASCADE')
+    for nombre in reversed(ORDEN_CARGA):
+        almacen.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
+
+    con_claves = True
+    for nombre in ORDEN_CARGA:
+        df = tablas.get(nombre)
+        if df is None or df.empty:
+            continue
+        df = almacen._saneada(df)
+        try:
+            almacen.ejecutar(
+                dialecto.ddl_tabla_core(nombre, df, con_claves=con_claves))
+            almacen.insertar_dataframe("core", nombre, df)
+        except Exception as e:  # noqa: BLE001 — fallback visible, no un pass
+            log.warning(
+                "Fallo al crear tabla %s con claves (%s). "
+                "Reintentando sin PK/FK — puede indicar datos duplicados o huerfanos.",
+                nombre, e,
+            )
+            con_claves = False
+            break
+
+    if not con_claves:
+        for nombre in reversed(ORDEN_CARGA):
+            almacen.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
+        for nombre in ORDEN_CARGA:
+            df = tablas.get(nombre)
+            if df is None or df.empty:
+                continue
+            df = almacen._saneada(df)
+            almacen.ejecutar(dialecto.ddl_tabla_core(nombre, df, con_claves=False))
+            almacen.insertar_dataframe("core", nombre, df)
+
+    # Hechos relacionales: provienen de main."factura_detalle" (cargada
+    # por el pipeline). Se materializan en core tras las dimensiones para
+    # que sus claves foraneas sean validas y las vistas puedan leerlos.
+    if almacen.existe_tabla("factura_detalle"):
+        hechos = almacen.tabla("factura_detalle")
+        almacen.registrar_tabla_core("factura_detalle", hechos)
+
+    # Vistas: una que referencie un objeto inexistente (p. ej. un
+    # workspace sin factura_detalle) no debe abortar todo el ETL; se
+    # registra y se continua con las demas.
+    vistas_fallidas = []
+    for nombre_vista, vista in dialecto.vistas().items():
+        try:
+            almacen.ejecutar(vista)
+        except Exception as e:  # noqa: BLE001
+            log.warning("No se pudo crear la vista %s: %s", nombre_vista, e)
+            vistas_fallidas.append(nombre_vista)
+    almacen.vistas_fallidas = vistas_fallidas
+
+    return {
+        nombre: len(tablas[nombre])
+        for nombre in ORDEN_CARGA
+        if nombre in tablas and tablas[nombre] is not None and not tablas[nombre].empty
+    }
+
+
+class DataStore(PuertoAlmacen):
+    """Almacen analitico sobre DuckDB embebido.
+
+    Implementa `PuertoAlmacen`: el resto del sistema depende del contrato,
+    no de este motor. Los metodos que no estan en el puerto (`ejecutar`,
+    `columnas`, `listar_tablas`, `existe_tabla`, `query_one`, `leer_cache`)
+    son detalle interno de esta implementacion.
+    """
+
     def __init__(self, db_path: Path, cache_dir: Optional[Path] = None, usar_cache: bool = True):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,8 +149,9 @@ class DataStore:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.usar_cache = usar_cache
         self.vistas_fallidas: list[str] = []
+        self.dialecto = DialectoDuckDB()
         self._conn = duckdb.connect(str(self.db_path))
-        for stmt in SQL_ARRANQUE:
+        for stmt in self.dialecto.sql_arranque():
             self._conn.execute(stmt)
 
     # ---------- registro y consulta ----------
@@ -98,29 +213,29 @@ class DataStore:
         por el pipeline y que no provienen de un archivo fuente. Si la carga
         con claves falla (datos referencialmente imperfectos), reintenta sin
         claves para no perder informacion.
+
+        La orquestacion es la misma que usa el adaptador PostgreSQL:
+        ``registrar_tabla_core_compartido``.
         """
+        return registrar_tabla_core_compartido(self, nombre, df, con_claves=con_claves)
+
+    def insertar_dataframe(self, esquema: str, nombre: str, df: pd.DataFrame) -> None:
+        """Inserta ``df`` en ``esquema.nombre`` con lista explicita de columnas.
+
+        El dataframe va registrado como tabla temporal de DuckDB y el
+        INSERT selecciona de ella: el contrato de columnas (nombres y
+        orden) queda escrito en el SQL, igual que en ``registrar_tabla``.
+        """
+        esquema = self._nombre_valido(esquema)
         nombre = self._nombre_valido(nombre)
-        clean = self._saneada(df)
-        self.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
-        errores = []
-        for claves in (con_claves, False):
-            try:
-                self.ejecutar(ddl_tabla_core(nombre, clean, con_claves=claves))
-                self._conn.register("__tmp_core", clean)
-                columnas = self._lista_columnas(clean)
-                self._conn.execute(
-                    f'INSERT INTO core."{nombre}" ({columnas}) SELECT {columnas} FROM __tmp_core')
-                self._conn.unregister("__tmp_core")
-                return nombre
-            except Exception as e:  # noqa: BLE001
-                try:
-                    self._conn.unregister("__tmp_core")
-                except Exception as e2:  # noqa: BLE001
-                    import logging
-                    logging.getLogger("taller.storage").debug(
-                        "No se pudo desregistrar __tmp_core tras fallo: %s", e2)
-                errores.append(str(e))
-        raise ValueError(f"No se pudo registrar core.{nombre}: " + " | ".join(errores))
+        self._conn.register("__tmp_core", df)
+        try:
+            columnas = self._lista_columnas(df)
+            self._conn.execute(
+                f'INSERT INTO {esquema}.{self._columna(nombre)} ({columnas}) '
+                f'SELECT {columnas} FROM __tmp_core')
+        finally:
+            self._conn.unregister("__tmp_core")
 
     def consulta(self, sql: str) -> pd.DataFrame:
         # Camino de SQL arbitrario (consola). Ademas de la denylist de
@@ -150,78 +265,13 @@ class DataStore:
         Devuelve ``{tabla: filas}`` del esquema core. Si la carga con claves
         falla (datos referencialmente imperfectos), se reconstruye el esquema
         completo sin claves para no perder informacion.
+
+        La orquestacion (orden de carga, fallback sin PK/FK, vistas no
+        destructivas) es la misma que usa el adaptador PostgreSQL:
+        ``construir_estructura_compartida``; aqui solo cambia el SQL, que
+        aporta ``self.dialecto``.
         """
-        self.ejecutar(SQL_ARRANQUE)
-        # Es dependiente (FK hacia facturas/clientes): se elimina primero.
-        self.ejecutar('DROP TABLE IF EXISTS core."factura_detalle" CASCADE')
-        for nombre in reversed(ORDEN_CARGA):
-            self.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
-
-        con_claves = True
-        for nombre in ORDEN_CARGA:
-            df = tablas.get(nombre)
-            if df is None or df.empty:
-                continue
-            df = self._saneada(df)
-            self._conn.register("__tmp_core", df)
-            try:
-                self.ejecutar(ddl_tabla_core(nombre, df, con_claves=con_claves))
-                columnas = self._lista_columnas(df)
-                self._conn.execute(
-                    f'INSERT INTO core."{nombre}" ({columnas}) SELECT {columnas} FROM __tmp_core')
-            except Exception as e:
-                import logging
-                logging.getLogger("taller.storage").warning(
-                    "Fallo al crear tabla %s con claves (%s). "
-                    "Reintentando sin PK/FK — puede indicar datos duplicados o huerfanos.",
-                    nombre, e,
-                )
-                con_claves = False
-                self._conn.unregister("__tmp_core")
-                break
-            self._conn.unregister("__tmp_core")
-
-        if not con_claves:
-            for nombre in reversed(ORDEN_CARGA):
-                self.ejecutar(f'DROP TABLE IF EXISTS core."{nombre}" CASCADE')
-            for nombre in ORDEN_CARGA:
-                df = tablas.get(nombre)
-                if df is None or df.empty:
-                    continue
-                df = self._saneada(df)
-                self.ejecutar(ddl_tabla_core(nombre, df, con_claves=False))
-                self._conn.register("__tmp_core", df)
-                columnas = self._lista_columnas(df)
-                self._conn.execute(
-                    f'INSERT INTO core."{nombre}" ({columnas}) SELECT {columnas} FROM __tmp_core')
-                self._conn.unregister("__tmp_core")
-
-        # Hechos relacionales: provienen de main."factura_detalle" (cargada
-        # por el pipeline). Se materializan en core tras las dimensiones para
-        # que sus claves foraneas sean validas y las vistas puedan leerlos.
-        if self.existe_tabla("factura_detalle"):
-            hechos = self.tabla("factura_detalle")
-            self.registrar_tabla_core("factura_detalle", hechos)
-
-        # Vistas: una que referencie un objeto inexistente (p. ej. un
-        # workspace sin factura_detalle) no debe abortar todo el ETL; se
-        # registra y se continua con las demas.
-        vistas_fallidas = []
-        for nombre_vista, vista in VISTAS_ANALITICA.items():
-            try:
-                self.ejecutar(vista)
-            except Exception as e:  # noqa: BLE001
-                import logging
-                logging.getLogger("taller.storage").warning(
-                    "No se pudo crear la vista %s: %s", nombre_vista, e)
-                vistas_fallidas.append(nombre_vista)
-        self.vistas_fallidas = vistas_fallidas
-
-        return {
-            nombre: len(tablas[nombre])
-            for nombre in ORDEN_CARGA
-            if nombre in tablas and tablas[nombre] is not None and not tablas[nombre].empty
-        }
+        return construir_estructura_compartida(self, tablas)
 
     @staticmethod
     def _columna(col: str) -> str:
@@ -335,7 +385,12 @@ class DataStore:
 
     @staticmethod
     def _saneada(df: pd.DataFrame) -> pd.DataFrame:
-        """Convierte columnas con tipos incompatibles antes de insertar en DuckDB."""
+        """Convierte columnas con tipos incompatibles antes de insertar en el almacen.
+
+        Es el mismo saneo en todos los adaptadores (DuckDB y PostgreSQL):
+        los dos motores deben ver dataframes identicos o las vistas dejan
+        de cuadrar.
+        """
         limpio = df.copy()
         for col in limpio.columns:
             if limpio[col].dtype == "object":

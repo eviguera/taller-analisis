@@ -15,6 +15,7 @@ from __future__ import annotations
 import pandas as pd
 
 from .simulador import aplicar_preset, base_datos, proyectar
+from .core.config import VENTANA_MESES
 
 # Defaults de la plataforma para el pitch/landing (CLP por mes, por tenant).
 PLANES_DEFAULT = {"Core": 150_000, "Pro": 450_000, "Enterprise": None}
@@ -113,7 +114,7 @@ def serie_mensual(analyzer) -> dict:
     if d.empty:
         return {}
     fecha_max = d["fecha"].max()
-    hist = d[d["fecha"] > fecha_max - pd.DateOffset(months=12)]
+    hist = d[d["fecha"] > fecha_max - pd.DateOffset(months=VENTANA_MESES)]
     if hist.empty:
         hist = d
 
@@ -164,7 +165,7 @@ def escenarios_proyeccion(analyzer, cfg) -> dict:
     def _proyectar(nombre_preset):
         p = aplicar_preset(base["churn_mensual_historico"], nombre_preset)
         return proyectar(
-            analyzer.df, meses=12,
+            analyzer.df, meses=VENTANA_MESES,
             crecimiento_anual=p["crecimiento_anual"],
             ticket_crecimiento=p["ticket_crecimiento"],
             churn_mensual=p["churn_mensual"],
