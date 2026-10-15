@@ -119,16 +119,25 @@ def _salto_al_contenido() -> None:
     """Enlace de salto al contenido principal (WCAG 2.4.1).
 
     El ``<main>`` de Streamlit (``data-testid="stMain"``) no expone un
-    ``id`` al que apuntar, asi que el ancla se inyecta aqui, antes de que
-    ``pg.run()`` emita la pagina. El skip-link es el primer elemento
-    enfocable del area principal y se ve solo con foco de teclado (el
-    estilo ``.skip-link`` vive en ``ui/theme.py``).
+    ``id`` al que apuntar, asi que el destino del salto se inyecta aparte,
+    justo antes del contenido (``_ancla_contenido``). El skip-link es el
+    primer elemento enfocable del area principal y se ve solo con foco de
+    teclado (el estilo ``.skip-link`` vive en ``ui/theme.py``).
     """
     st.markdown(
-        '<a class="skip-link" href="#contenido">Saltar al contenido</a>'
-        '<a id="contenido" tabindex="-1"></a>',
+        '<a class="skip-link" href="#contenido">Saltar al contenido</a>',
         unsafe_allow_html=True,
     )
+
+
+def _ancla_contenido() -> None:
+    """Destino del salto: invisible, al inicio del contenido de la pagina.
+
+    Se inyecta despues del sidebar y antes de ``pg.run()`` para que el
+    foco caiga en el contenido y el usuario no vuelva a toparse con la
+    navegacion lateral tras usar el salto.
+    """
+    st.markdown('<a id="contenido" tabindex="-1"></a>', unsafe_allow_html=True)
 
 
 def _navegar(cfg_head, kiosco: bool):
@@ -149,6 +158,7 @@ def _navegar(cfg_head, kiosco: bool):
                 (cfg_head.tema or {}).get("texto_logo", "GIRO Analytics"),
                 cfg_head.slogan), unsafe_allow_html=True)
 
+    _ancla_contenido()
     pg = st.navigation(paginas, position="sidebar", expanded=not kiosco)
     if kiosco:
         ui_login.aviso_kiosco()

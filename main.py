@@ -27,11 +27,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from src.core.pipeline import procesar_etl, load_all
+from src import aplicacion
+from src.core.pipeline import load_all
 from src.core.calidad import resumen as _resumen_calidad
 from src.core.catalog import escanear_directorio, clasificar_archivo
 from src.storage.schema import VISTAS_ANALITICA
-from src.data_loader import get_data_summary
 from src.analyzer import Analyzer
 from src.predictions import Predictor
 from src.reports import ReportGenerator
@@ -68,7 +68,7 @@ def cmd_resumen(args):
     print("RESUMEN DE NEGOCIO")
     print("=" * 70)
     data = load_all(cfg)
-    for nombre, info in get_data_summary(data).items():
+    for nombre, info in aplicacion.resumen_calidad(data).items():
         print(f"\n[{nombre}]  {_formato(info['registros'])} registros · {len(info['columnas'])} columnas")
         nulos = [f"{k}={v}" for k, v in info["nulos"].items() if v > 0]
         if nulos:
@@ -90,7 +90,7 @@ def cmd_resumen(args):
 def cmd_etl(args):
     cfg = _config(args)
     print("Ejecutando pipeline ETL...")
-    resultado = procesar_etl(cfg)
+    resultado = aplicacion.ejecutar_etl(cfg)
     print(f"\nTablas registradas en DuckDB ({resultado.tiempo_carga}s):")
     for tabla, filas in resultado.tablas_registradas.items():
         print(f"  - {tabla}: {_formato(filas)} filas")
@@ -547,12 +547,12 @@ def _dsn_seguro(dsn: str) -> str:
 
 def cmd_warehouse(args):
     """Publica el almacen DuckDB hacia un warehouse SQL externo (multi-DB)."""
-    from src.core.warehouse import sincronizar, ver
     cfg = _config(args)
 
     if args.accion == "sync":
         esquemas = tuple(e.strip() for e in (args.esquemas or "datasets,core,analitica").split(","))
-        publicados = sincronizar(cfg, args.dsn, esquemas=esquemas, prefijo=args.prefijo)
+        publicados = aplicacion.publicar_warehouse(cfg, args.dsn, esquemas=esquemas,
+                                                   prefijo=args.prefijo)
         print(f"Publicados {len(publicados)} objetos al warehouse ({_dsn_seguro(args.dsn)}):")
         print(f"  {'esquema':<10} {'origen':<24} {'tabla':<30} {'filas':>8}")
         for p in publicados:
@@ -560,7 +560,7 @@ def cmd_warehouse(args):
         if not publicados:
             print("  (nada que publicar)")
     elif args.accion == "ver":
-        df = ver(cfg, args.dsn, prefijo=args.prefijo)
+        df = aplicacion.ver_warehouse(cfg, args.dsn, prefijo=args.prefijo)
         if df.empty:
             print("No hay objetos GIRO en el warehouse.")
         else:

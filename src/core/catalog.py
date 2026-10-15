@@ -134,15 +134,16 @@ def vincular_archivos_a_datasets(archivos: List[ArchivoDetectado],
     usados = set()
 
     # 1. Coincidencia explicita por nombre de archivo en config
+    base = Path(cfg.directorio_datos)
     for nombre, dcfg in cfg.datasets.items():
         if dcfg.archivo:
-            candidato = cfg.directorio_datos / dcfg.archivo
+            candidato = base / dcfg.archivo
             if candidato.exists():
                 asignacion[nombre] = candidato
                 usados.add(candidato)
                 continue
             for alt in dcfg.fuentes_alternativas:
-                alt_path = cfg.directorio_datos / alt
+                alt_path = base / alt
                 if alt_path.exists():
                     asignacion[nombre] = alt_path
                     usados.add(alt_path)

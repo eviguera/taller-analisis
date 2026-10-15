@@ -7,7 +7,9 @@ import pandas as pd
 import streamlit as st
 
 from src import aplicacion
-from src.aplicacion import CUOTA_WORKSPACE_BYTES, EJEMPLOS_SQL, LIMITE_SUBIDA_BYTES
+from src.aplicacion import (CUOTA_WORKSPACE_BYTES, EJEMPLOS_SQL,
+                             LIMITE_SUBIDA_BYTES, publicar_warehouse,
+                             ver_warehouse)
 from src.core import auth
 from src.core.catalog import escanear_directorio, vincular_archivos_a_datasets
 from src.core.conector_sql import mensaje_error
@@ -627,8 +629,6 @@ de la pestana *Procesar (ETL)*.
                        "analiticas) hacia tu warehouse SQL: Postgres/Neon, "
                        "MySQL, SQLite. Ideal para gobernanza de datos: GIRO "
                        "calcula localmente y entrega tablas listas para BI.")
-            from src.core.warehouse import sincronizar as _wh_sync
-            from src.core.warehouse import ver as _wh_ver
             wh_dsn = st.text_input(
                 "URL de conexión al warehouse",
                 placeholder="postgresql://user:pass@host:5432/warehouse · "
@@ -648,7 +648,7 @@ de la pestana *Procesar (ETL)*.
                            "Solo un administrador puede publicar en el warehouse.")
                     with st.status("Publicando...", expanded=False) as wh_estado:
                         try:
-                            publicados = _wh_sync(cfg, wh_dsn.strip())
+                            publicados = publicar_warehouse(cfg, wh_dsn.strip())
                             wh_estado.update(label=f"{len(publicados)} objetos publicados",
                                              state="complete", expanded=False)
                             st.dataframe(pd.DataFrame(publicados), width="stretch")
@@ -662,7 +662,7 @@ de la pestana *Procesar (ETL)*.
                              disabled=not wh_dsn.strip()):
                     try:
                         with st.spinner("Consultando las tablas publicadas…"):
-                            df_wh = _wh_ver(cfg, wh_dsn.strip())
+                            df_wh = ver_warehouse(cfg, wh_dsn.strip())
                         if df_wh.empty:
                             st.info("No hay tablas GIRO en el warehouse destino.")
                         else:

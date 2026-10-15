@@ -28,7 +28,10 @@ TIEMPO = 120
 #: Paginas migradas al wrapper ``c.dataframe`` y con pestañas perezosas: en
 #: AppTest no se puede pulsar una pestana (no es un widget manipulable), asi
 #: que se fuerza ``Tab.open`` y se ejecuta el contenido de todas.
-PAGINAS_MIGRADAS = ("resumen", "clientes", "alertas", "predicciones")
+PAGINAS_MIGRADAS = (
+    "resumen", "clientes", "alertas", "predicciones", "acciones",
+    "inventario", "negocio", "servicios", "simulador", "vehiculos",
+)
 
 
 def setUpModule():
@@ -202,6 +205,15 @@ class TestPaginasMigradas(unittest.TestCase):
                 self.assertGreaterEqual(
                     len(prueba.dataframe), minimo,
                     f"{nombre}: {len(prueba.dataframe)} dataframes en el render")
+
+
+class TestPaginasSinMigrar(unittest.TestCase):
+    """``datos`` aun llama a ``st.dataframe`` crudo: no debe romper."""
+
+    def test_datos_renderiza_sin_excepciones(self):
+        prueba = _correr_pagina("datos")
+        self.assertEqual(_excepciones(prueba), [],
+                         f"excepciones en datos: {_excepciones(prueba)}")
 
 
 if __name__ == "__main__":

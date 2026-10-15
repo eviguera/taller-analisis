@@ -285,11 +285,13 @@ def descargar(df: pd.DataFrame, nombre_base: str, etiquetas_valores=None):
             icon=":material/download:",
         )
     else:
-        from src.loaders.pspp_loader import exportar_sav
-        with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
-            exportar_sav(df, Path(tmp.name), variable_value_labels=etiquetas_valores or {})
-            tmp.seek(0)
-            contenido = tmp.read()
+        # La exportacion SAV es un caso de uso compartido (``src.aplicacion``):
+        # la UI no toca el loader directamente, igual que la API y el CLI.
+        from src.aplicacion import exportar_datasets_sav
+        with tempfile.TemporaryDirectory() as tmp:
+            exportar_datasets_sav({nombre_base: df}, tmp,
+                                  etiquetas={nombre_base: etiquetas_valores or {}})
+            contenido = (Path(tmp) / f"{nombre_base}.sav").read_bytes()
         st.download_button(
             "Descargar", contenido, file_name=nombre,
             mime="application/octet-stream", icon=":material/download:",

@@ -15,7 +15,7 @@ un fichero que deje el CLI.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -170,12 +170,17 @@ def filas_conectores(cfg) -> List[Dict]:
     return filas
 
 
-def exportar_datasets_sav(data, destino) -> Tuple[List[str], Dict[str, str]]:
+def exportar_datasets_sav(data, destino,
+                         etiquetas: Optional[Dict[str, dict]] = None) -> Tuple[List[str], Dict[str, str]]:
     """Exporta cada dataset cargado a ``destino/nombre.sav``.
 
     Devuelve ``(exportados, fallos)``: los datasets vacios se saltan y un
     dataset que pyreadstat no sabe escribir no tumba los demas, que es
     como lo espera la UI (un aviso por fallo y el resto exportado).
+
+    ``etiquetas`` (opcional) es un mapa ``{nombre: {valor: texto}}`` de
+    etiquetas de valores por dataset: el boton de descarga de ``ui``
+    las pasa y el resto de llamadores lo deja en ``None``.
     """
     from ..loaders.pspp_loader import exportar_sav  # noqa: PLC0415 — adaptador, import perezoso
 
@@ -188,7 +193,8 @@ def exportar_datasets_sav(data, destino) -> Tuple[List[str], Dict[str, str]]:
             continue
         try:
             exportar_sav(df, destino / f"{nombre}.sav",
-                         label_archivo=f"{nombre} exportado")
+                         label_archivo=f"{nombre} exportado",
+                         etiquetas_valores=(etiquetas or {}).get(nombre))
             exportados.append(nombre)
         except Exception as e:  # noqa: BLE001 — un dataset malo no tumba la exportacion
             fallos[nombre] = str(e)

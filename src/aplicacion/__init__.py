@@ -39,6 +39,11 @@ from .carga import (
     leer_archivos_pspp,
     mismo_contenido,
 )
+from .warehouse import (
+    ESQUEMAS_WAREHOUSE,
+    publicar_warehouse,
+    ver_warehouse,
+)
 
 __all__ = [
     "EJEMPLOS_SQL",
@@ -66,4 +71,7 @@ __all__ = [
     "guardar_subidas",
     "leer_archivos_pspp",
     "mismo_contenido",
+    "ESQUEMAS_WAREHOUSE",
+    "publicar_warehouse",
+    "ver_warehouse",
 ]
