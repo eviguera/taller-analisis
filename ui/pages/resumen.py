@@ -1,9 +1,11 @@
-"""Pagina: Resumen general (KPIs principales + tendencia principal).
+"""Pagina: Resumen general.
 
-Version minimalista: solo lo esencial esta visible. Los detalles secundarios
-viven dentro de "Ver mas detalles" para no abrumar al usuario al entrar.
+Diseño minimalista inspirado en Plausible + Stripe + Linear:
+- Un número principal enorme arriba a la izquierda (aguja principal).
+- Un solo gráfico hero (ingresos por mes).
+- Clientes principales y alertas como tablas simples dentro de un expander.
+- Todo lo demás colapsable para no abrumar al usuario al entrar.
 """
-
 from datetime import timedelta
 
 import pandas as pd
@@ -14,7 +16,6 @@ from ui.context import obtener_estado
 
 
 def _rango_desde_popover(df):
-    """Selector de periodo dentro de un popover (presets + rango personalizado)."""
     fecha_max = df["fecha"].max().date()
     fecha_min = df["fecha"].min().date()
     presets = {
@@ -26,13 +27,11 @@ def _rango_desde_popover(df):
         key="resumen_periodo", label_visibility="collapsed", width="stretch",
     )
     modo = modo or "Último año"
-
     if modo == "Personalizado":
         col1, col2 = st.columns(2)
         f1 = col1.date_input("Desde", value=fecha_min, min_value=fecha_min, max_value=fecha_max)
         f2 = col2.date_input("Hasta", value=fecha_max, min_value=fecha_min, max_value=fecha_max)
         return f1, f2
-
     meses = presets[modo]
     if meses is None:
         return fecha_min, fecha_max
@@ -47,7 +46,7 @@ def _nunique(df, columna):
 def principal():
     try:
         cfg, data, analyzer, predictor = obtener_estado()
-    except Exception as e:  # nunca falle silenciosamente
+    except Exception as e:
         c.mensaje_error(
             "No se pudieron cargar los datos del resumen.",
             detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible y vuelve a intentar.",
@@ -63,15 +62,15 @@ def principal():
         )
         return
 
-    # Protege contra fechas nulas (datos subidos por el usuario sin fecha valida).
+    # Protege contra fechas nulas.
     try:
         fecha_max = pd.Timestamp(df["fecha"].max())
         if pd.isna(fecha_max):
-            raise ValueError("La columna fecha no tiene valores validos.")
+            raise ValueError("La columna fecha no tiene valores válidos.")
         fecha_max = fecha_max.date()
     except Exception:
         c.mensaje_error(
-            "Los datos de facturas tienen fechas invalidas.",
+            "Los datos de facturas tienen fechas inválidas.",
             detalle="Revisa que el archivo de facturas tenga una columna 'fecha' con valores parseables.",
         )
         return
@@ -97,7 +96,7 @@ def principal():
         )
         return
 
-    # ---- KPIs esenciales (solo tres, mas aire) ----
+    # ---- KPI esenciales (aguja principal + 2 secundarios) ----
     total_ingresos = filtrado["total"].sum()
     total_facturas = len(filtrado)
     ticket = filtrado["total"].mean()
@@ -122,7 +121,7 @@ def principal():
          "Ingreso promedio por factura"),
     ])
 
-    # ---- Un solo grafico principal visible ----
+    # ---- Un solo grafico hero visible ----
     try:
         serie = filtrado.groupby("anio_mes").agg(
             ingresos=("total", "sum"), facturas=("id", "count")).reset_index()
@@ -138,61 +137,66 @@ def principal():
             detalle=str(e) if str(e) else "Revisa que las columnas de fecha y total tengan valores válidos.",
         )
 
-    # ---- Detalles opcionales (colapsables) ----
+    # ---- Detalles opcionales: tablas simples (estilo Stripe) ----
     with st.expander("Ver más detalles", icon=":material/expand_more:"):
-        col1, col2 = st.columns(2)
-        with col1:
+        col_a, col_b = st.columns(2)
+
+        with col_a:
             try:
                 n_clientes = _nunique(filtrado, "cliente_id")
-                st.metric("Clientes activos", c.miles(n_clientes))
+                c.kpi_grid([
+                    ("Clientes activos", c.miles(n_clientes), None, None,
+                     "Clientes distintos en el periodo"),
+                ])
             except Exception:
                 pass
-        with col2:
+
+            try:
+                top_clientes = (
+                    filtrado.groupby(["cliente_id", "nombre"])["total"]
+                    .sum().sort_values(ascending=False).head(5).reset_index()
+                )
+                if not top_clientes.empty:
+                    top_clientes = top_clientes.rename(
+                        columns={"nombre": "Cliente", "total": "Gasto"})
+                    top_clientes["Gasto"] = top_clientes["Gasto"].apply(
+                        lambda v: c.moneda(v, cfg.moneda))
+                    with c.panel("Top clientes", icono=":material/groups:"):
+                        c.dataframe(
+                            top_clientes[["Cliente", "Gasto"]],
+                            alto=200, indice_visible=False,
+                        )
+            except Exception:
+                pass
+
+        with col_b:
             try:
                 n_vehiculos = _nunique(filtrado, "vehiculo_id")
-                st.metric("Vehículos atendidos", c.miles(n_vehiculos))
+                c.kpi_grid([
+                    ("Vehículos atendidos", c.miles(n_vehiculos), None, None,
+                     "Vehículos distintos en el periodo"),
+                ])
             except Exception:
                 pass
 
-        try:
-            mensual = df.groupby("anio_mes").agg(
-                ingresos=("total", "sum"),
-                facturas=("id", "count"),
-                ticket=("total", "mean"),
-            ).tail(8)
-
-            def tendencia(columna):
-                return mensual[columna].tolist() if not mensual.empty else None
-
-            c.kpi_grid([
-                ("Facturas", c.miles(total_facturas), None, tendencia("facturas"),
-                 "Numero de facturas emitidas"),
-                ("Ticket promedio", c.moneda(ticket, cfg.moneda), None, tendencia("ticket"),
-                 "Ingreso promedio por factura"),
-            ])
-        except Exception:
-            pass
-
-        try:
-            col_a, col_b = st.columns(2)
-            with col_a:
-                por_marca = filtrado.groupby("marca").agg(
-                    ingresos=("total", "sum")).sort_values("ingresos", ascending=False).reset_index()
-                with c.panel("Ingresos por marca", "Marcas que más aportan",
-                             icono=":material/directions_car:"):
-                    c.mostrar_grafico(c.grafico_barras(
-                        por_marca, "marca", "ingresos",
-                        etiquetas={"marca": "Marca", "ingresos": "Ingresos"}),
-                        width="stretch", height="stretch")
-            with col_b:
-                estado_df = filtrado["estado"].value_counts().reset_index()
-                estado_df.columns = ["Estado", "Cantidad"]
-                with c.panel("Estado de facturas", "Distribución",
-                             icono=":material/check_circle:"):
-                    c.mostrar_grafico(c.grafico_pastel(estado_df, "Estado", "Cantidad"),
-                                    width="stretch", height="stretch")
-        except Exception:
-            pass
+            try:
+                alertas = []
+                if "estado" in filtrado.columns:
+                    pendientes = filtrado[filtrado["estado"] == "Pendiente"]
+                    if not pendientes.empty:
+                        alertas.append(
+                            ("rojo", f"{len(pendientes)} facturas pendientes",
+                             f"Monto pendiente: {c.moneda(pendientes['total'].sum(), cfg.moneda)}")
+                        )
+                if alertas:
+                    with c.panel("Alertas activas", icono=":material/notifications_active:"):
+                        for tipo, titulo, detalle in alertas:
+                            st.markdown(
+                                f"{c.badge(tipo.upper(), tipo)} **{titulo}**"
+                            )
+                            st.caption(detalle)
+            except Exception:
+                pass
 
     # ---- Vista previa de datos crudos ----
     with st.expander("Ver datos crudos (filtrados)", icon=":material/table_rows:"):

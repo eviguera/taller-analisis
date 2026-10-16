@@ -1,11 +1,10 @@
 """Sistema de diseno compartido de la interfaz web.
 
-Usa componentes nativos de Streamlit (st.metric, st.badge, st.title) y
-graficos Plotly con una estetica sobria y tecnologica: paleta suave de
-azul, gris y verde, tipografia Inter/Space Grotesk y adaptacion automatica
-al modo claro/oscuro del tema.
+Estetica minimalista inspirada en Plausible + Stripe + Linear:
+- Casi monocromático; color solo para significado.
+- Bordes tenues, sin sombras genericas ni tarjetas idénticas.
+- Tablas como interfaz principal; un chart hero por vista.
 """
-
 import io
 import tempfile
 from contextlib import contextmanager
@@ -16,9 +15,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# Formato de numeros/moneda: una sola implementacion, en el nucleo. El CLI y
-# los reportes usan la misma; aqui solo se reexporta para que las paginas
-# sigan llamando a ``c.miles``/``c.moneda``.
 from src.formatos import (
     formato_archivo as _f_formato_archivo,
     formato_moneda as _f_formato_moneda,
@@ -27,18 +23,17 @@ from src.formatos import (
 )
 
 # ------------------------------------------------------------------
-#  Paleta de tablero de taller (sincronizada con ui/theme.py)
-#  Colores con identidad: verde-teca (inspección), ámbar (advertencia),
-#  naranja (acción), azul noche (fondos). Nada de azul SaaS genérico.
+#  Paleta casi monocromática. Color solo para significado.
 # ------------------------------------------------------------------
 PALETA = {
-    "primario": "#0F766E",        # verde-teca: inspección, aceite limpio
+    "primario": "#0F766E",        # verde-teca: acción principal / OK
     "primario_suave": "#34D399",
-    "secundario": "#B45309",      # ámbar: advertencia, luz de taller
-    "acento": "#F59E0B",          # naranja cálido: acción
-    "fondo_panel": "#0B1120",     # azul noche profundo: fondos de panel
-    "borde_sutil": "#1F2A44",     # borde de panel metálico
-    "texto_suave": "#94A3B8",     # texto secundario, etiquetas
+    "secundario": "#B45309",      # ámbar: advertencia
+    "acento": "#DC2626",          # rojo: crítica
+    "fondo_panel": "#0B1120",
+    "borde_sutil": "#E2E8F0",     # borde tenue (claro)
+    "texto_suave": "#64748B",
+    "fondo_suave": "#F8FAFC",
     "peligro": "#DC2626",
     "gris": "#64748b",
     "gris_suave": "#94a3b8",
@@ -49,7 +44,8 @@ SECUENCIA_COLORES = [
     PALETA["acento"], PALETA["peligro"], PALETA["gris"], PALETA["gris_suave"],
 ]
 
-MESES_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+MESES_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
+            "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
 DIAS_ES = {
     "Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
@@ -57,34 +53,22 @@ DIAS_ES = {
 }
 
 
-# ------------------------------------------------------------------
-#  Utilidades de formato
-# ------------------------------------------------------------------
-
 def miles(valor, decimales=0):
-    """Numero con separador de miles (es-CL)."""
     return _f_miles(valor, decimales)
 
 
 def moneda(valor, moneda="MXN"):
-    """Importe con simbolo.
-
-    El default ``MXN`` se mantiene por compatibilidad con las llamadas
-    existentes; ``MXN`` y ``CLP`` comparten simbolo, asi que la salida no
-    cambia. La logica vive en ``src.formatos``.
-    """
     return _f_moneda(valor, moneda)
 
 
 def formato_moneda(moneda="CLP"):
-    """Formato de columna numerica para `column_config` con la moneda del cfg."""
     return _f_formato_moneda(moneda)
 
 
 def _es_oscuro() -> bool:
     try:
         return st.context.theme.type == "dark"
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -97,7 +81,6 @@ def _color_texto() -> str:
 # ------------------------------------------------------------------
 
 def cabecera(titulo, subtitulo=None, icono=None, chips=None):
-    """Encabezado de pagina: icono + titulo + subtitulo + chips opcionales."""
     st.title(titulo, icon=icono)
     if subtitulo:
         st.caption(subtitulo)
@@ -108,28 +91,27 @@ def cabecera(titulo, subtitulo=None, icono=None, chips=None):
 
 
 def titulo_seccion(titulo, subtitulo=None, icono=None):
-    """Seccion de pagina: h2 (bajo el h1 de ``cabecera``, sin saltar nivel)."""
     st.markdown(f"## {icono + ' ' if icono else ''}{titulo}")
     if subtitulo:
         st.caption(subtitulo)
 
 
+# ------------------------------------------------------------------
+#  Paneles: borde tenue, sin sombra generica.
+# ------------------------------------------------------------------
+
 @contextmanager
 def panel(titulo, subtitulo=None, icono=None, alto=None):
-    """Panel con borde metálico para agrupar un grafico/tabla.
-
-    Sin sombras genericas (ese es el kit de tarjetas SaaS). Solo un borde
-    de 1px en color sutil y un encabezado con el color primario del tema.
-    """
+    """Panel con borde tenue para agrupar un grafico o tabla."""
     kw = {"border": True}
     if alto:
         kw["height"] = alto
     with st.container(**kw):
         st.markdown(
-            f"<div style='color:{PALETA['texto_suave']};font-size:0.8rem;"
-            f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;'"
+            f"<div style='color:{PALETA['texto_suave']};font-size:0.75rem;"
+            f"text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.5rem;'"
             f" border-bottom:1px solid {PALETA['borde_sutil']};"
-            f"padding-bottom:0.4rem;'>{icono + ' ' if icono else ''}{titulo}</div>",
+            f"padding-bottom:0.35rem;'>{icono + ' ' if icono else ''}{titulo}</div>",
             unsafe_allow_html=True,
         )
         if subtitulo:
@@ -138,21 +120,17 @@ def panel(titulo, subtitulo=None, icono=None, alto=None):
 
 
 # ------------------------------------------------------------------
-#  KPIs
+#  KPIs: una aguja principal + lecturas secundarias discretas.
 # ------------------------------------------------------------------
 
 def kpi_grid(items):
-    """Renderiza una fila de KPIs como lecturas de aguja en tablero de taller.
+    """Renderiza una fila de KPIs como lecturas de aguja.
 
     items: lista de tuplas
         (etiqueta, valor[, delta[, tendencia[, ayuda]]])
-      - delta: string de variacion (p. ej. "+12%")
-      - tendencia: secuencia de numeros para el mini-grafico (sparkline)
-      - ayuda: texto informativo
 
-    El primer ítem es la "aguja principal": valor más grande y color primario.
-    El resto son lecturas secundarias, más discretas. Nada de tarjetas idénticas
-    con borde redondeado uniforme (ese es el kit genérico de SaaS).
+    El primer ítem es la aguja principal: valor más grande, color primario.
+    El resto son lecturas secundarias, discretas.
     """
     with st.container(horizontal=True):
         for i, item in enumerate(items):
@@ -163,9 +141,9 @@ def kpi_grid(items):
             with st.container(border=True):
                 if es_primario:
                     st.markdown(
-                        f"<div style='color:{PALETA['texto_suave']};font-size:0.85rem;"
+                        f"<div style='color:{PALETA['texto_suave']};font-size:0.8rem;"
                         f"text-transform:uppercase;letter-spacing:0.08em;'>{etiqueta}</div>"
-                        f"<div style='color:{PALETA['primario']};font-size:2rem;"
+                        f"<div style='color:{PALETA['primario']};font-size:2.1rem;"
                         f"font-weight:700;'>{valor}</div>"
                         f"{f'<div style=\"color:{PALETA['primario_suave']};font-size:0.8rem;\" '
                         f'>{delta}</div>' if delta else ''}"
@@ -175,9 +153,9 @@ def kpi_grid(items):
                     )
                 else:
                     st.markdown(
-                        f"<div style='color:{PALETA['texto_suave']};font-size:0.75rem;"
+                        f"<div style='color:{PALETA['texto_suave']};font-size:0.7rem;"
                         f"text-transform:uppercase;letter-spacing:0.05em;'>{etiqueta}</div>"
-                        f"<div style='color:{PALETA['primario_suave']};font-size:1.35rem;"
+                        f"<div style='color:{PALETA['primario_suave']};font-size:1.4rem;"
                         f"font-weight:600;'>{valor}</div>"
                         f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.7rem;\" '
                         f'>{delta}</div>' if delta else ''}"
@@ -188,7 +166,6 @@ def kpi_grid(items):
 
 
 def vacio(mensaje, icono=":material/info:", detalle=None, cta=None):
-    """Estado vacio con tono informativo ligero y CTA opcional."""
     with st.container(border=True):
         st.markdown(f"**{icono} {mensaje}**")
         if detalle:
@@ -202,7 +179,6 @@ def vacio(mensaje, icono=":material/info:", detalle=None, cta=None):
 # ------------------------------------------------------------------
 
 def mensaje_error(msg, detalle=None):
-    """Muestra un error con icono y detalle opcional usando st.error()."""
     texto = f"**{msg}**"
     if detalle:
         texto += f"\n\n{detalle}"
@@ -210,7 +186,6 @@ def mensaje_error(msg, detalle=None):
 
 
 def confirmacion_exito(msg, detalle=None):
-    """Muestra un exito con icono y detalle opcional usando st.success()."""
     texto = f"**{msg}**"
     if detalle:
         texto += f"\n\n{detalle}"
@@ -219,12 +194,6 @@ def confirmacion_exito(msg, detalle=None):
 
 def vacio_con_cta(mensaje, cta, icono=":material/info:", on_click=None,
                   clave=None, cta_secundario=None, on_click_secundario=None):
-    """Estado vacio con CTA prominente (boton) para guiar al usuario.
-
-    El boton **ejecuta** ``on_click`` (sin callback seria un boton que no
-    hace nada, el peor estado vacio posible). ``cta_secundario`` permite una
-    salida de emergencia (\"lo haré después\").
-    """
     with st.container(border=True):
         st.markdown(f"**{icono} {mensaje}**")
         col1, col2 = st.columns([2, 1] if cta_secundario else [1])
@@ -241,27 +210,17 @@ def vacio_con_cta(mensaje, cta, icono=":material/info:", on_click=None,
 
 
 # ------------------------------------------------------------------
-#  Formato / badges
+#  Badges: sin estilo píldora, color solo para significado.
 # ------------------------------------------------------------------
 
-def formato_archivo(fmt):
-    """Etiqueta de formato para una celda de tabla (texto plano)."""
-    return _f_formato_archivo(fmt)
-
-
 def badge(texto, tipo="info"):
-    """Badge con colores de la paleta de taller y borde suave.
-
-    Sin estilo píldora (border-radius: 9999px): ese es un tell de IA
-    generativa. Usa border-radius leve (4px) y colores de la paleta.
-    """
     color = {
-        "verde": PALETA["primario"],        # verde-teca
-        "rojo": PALETA["peligro"],          # rojo peligro
-        "amarillo": PALETA["secundario"],   # ámbar advertencia
-        "azul": PALETA["primario"],         # azul noche / primario
-        "info": PALETA["texto_suave"],      # gris suave
-        "acento": PALETA["acento"],         # naranja acción
+        "verde": PALETA["primario"],
+        "rojo": PALETA["peligro"],
+        "amarillo": PALETA["secundario"],
+        "azul": PALETA["primario"],
+        "info": PALETA["texto_suave"],
+        "acento": PALETA["acento"],
     }.get(tipo, PALETA["texto_suave"])
     return (
         f"<span style='background:{color};color:#ffffff;padding:2px 8px;"
@@ -271,22 +230,11 @@ def badge(texto, tipo="info"):
 
 
 # ------------------------------------------------------------------
-#  Tablas reutilizables
+#  Tablas reutilizables: números a la derecha, filas limpias.
 # ------------------------------------------------------------------
 
 def dataframe(df, etiquetas=None, column_config=None, alto=None,
               indice_visible=False, **kwargs):
-    """Tabla analitica con ancho de pagina (wrapper de ``st.dataframe``).
-
-    Las paginas no deben llamar a ``st.dataframe`` directamente: aqui se
-    centraliza el ancho fluido, el indice oculto por defecto (un indice
-    crudo de pandas no es informacion de negocio) y ``etiquetas``, un dict
-    ``{"columna": "Etiqueta legible"}`` que se funde en ``column_config``.
-    Un ``column_config`` explicito (NumberColumn con formato,
-    ProgressColumn, …) manda sobre la etiqueta de la misma columna.
-    ``indice_visible=True`` conserva el indice, necesario cuando la tabla
-    lo trae como etiqueta de fila (p. ej. una matriz de fechas).
-    """
     config = dict(column_config or {})
     for columna, titulo in (etiquetas or {}).items():
         config.setdefault(columna, titulo)
@@ -298,11 +246,10 @@ def dataframe(df, etiquetas=None, column_config=None, alto=None,
 
 
 # ------------------------------------------------------------------
-#  Utilidades de descarga
+#  Descargas
 # ------------------------------------------------------------------
 
 def descargar(df: pd.DataFrame, nombre_base: str, etiquetas_valores=None):
-    """Genera botones de descarga en CSV, Excel y PSPP (.sav) para `df`."""
     opciones = ["CSV", "Excel"]
     try:
         import pyreadstat  # noqa: F401
@@ -332,8 +279,6 @@ def descargar(df: pd.DataFrame, nombre_base: str, etiquetas_valores=None):
             icon=":material/download:",
         )
     else:
-        # La exportacion SAV es un caso de uso compartido (``src.aplicacion``):
-        # la UI no toca el loader directamente, igual que la API y el CLI.
         from src.aplicacion import exportar_datasets_sav
         with tempfile.TemporaryDirectory() as tmp:
             exportar_datasets_sav({nombre_base: df}, tmp,
@@ -346,11 +291,10 @@ def descargar(df: pd.DataFrame, nombre_base: str, etiquetas_valores=None):
 
 
 # ------------------------------------------------------------------
-#  Graficos reutilizables (estetica sobria y consistente)
+#  Graficos: un chart hero por vista, colores de la paleta.
 # ------------------------------------------------------------------
 
 def _layout(fig, titulo="", leyenda=True):
-    """Aplica una estetica consistente a cualquier figura Plotly."""
     fig.update_layout(
         template="plotly_dark" if _es_oscuro() else "plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -364,7 +308,7 @@ def _layout(fig, titulo="", leyenda=True):
                     y=1.02, xanchor="left", x=0) if leyenda else dict(visible=False),
         margin=dict(l=10, r=10, t=52 if titulo else 24, b=10),
         hovermode="x unified",
-        bargap=0.35,
+        bargap=0.4,
     )
     grid = "rgba(31,42,68,0.35)" if _es_oscuro() else "rgba(31,42,68,0.15)"
     fig.update_xaxes(gridcolor=grid, zeroline=False)
@@ -373,13 +317,6 @@ def _layout(fig, titulo="", leyenda=True):
 
 
 def mostrar_grafico(fig, clave=None, **kwargs):
-    """Renderiza una figura Plotly ya construida (wrapper de st.plotly_chart).
-
-    Las paginas no deben llamar a ``st.plotly_chart`` directamente: aqui se
-    centraliza el layout comun (stretch, config) y el dia que cambia la
-    libreria se toca un solo lugar. ``kwargs`` admite ``width``/``height``
-    para los casos que necesitan una altura fija.
-    """
     kwargs.setdefault("width", "stretch")
     kwargs.setdefault("height", "stretch")
     kwargs.setdefault("config", {"displaylogo": False})
@@ -445,7 +382,6 @@ def grafico_hist(df, x, nbins=20, titulo="", xlabel=None):
 
 
 def grafico_area(df, x, y, titulo=""):
-    """Grafico de area (ideal para acumulados)."""
     fig = px.area(df, x=x, y=y, color_discrete_sequence=[PALETA["exito"]])
     _layout(fig, titulo)
     fig.update_traces(line_width=0, fillcolor="rgba(5,150,105,0.18)")
@@ -453,5 +389,4 @@ def grafico_area(df, x, y, titulo=""):
 
 
 def progreso(valor, formato="%.0f%%"):
-    """Muestra una barra de progreso con etiqueta, ideal para probabilidades."""
     st.progress(min(max(valor, 0), 1), text=formato % valor)

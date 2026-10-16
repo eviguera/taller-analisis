@@ -4,23 +4,28 @@ Cada empresa (workspace) puede llevar sus colores de marca en
 ``config.yaml`` bajo ``tema:``. La app inyecta un overlay de CSS por sesion
 sobre el tema base de Streamlit, manteniendo la identidad del cliente en
 demo, piloto y despliegue.
-"""
 
+Diseño minimalista inspirado en Plausible + Stripe + Linear:
+- Casi monocromático; color solo para significado (estado/accion).
+- Bordes tenues, sin sombras genericas en todo.
+- Tipografía Inter/Space Grotesk ya definida en .streamlit/config.toml.
+"""
 import html
 
 import streamlit as st
 
 DEFAULT_TEMA = {
-    # Paleta con identidad de taller mecánico / tablero de control.
-    # Evita colores SaaS genéricos (azul #2563eb, verde #059669 estándar).
-    "color_primario": "#0F766E",      # verde-teca: inspección, aceite limpio, acción principal
-    "color_secundario": "#B45309",    # ámbar: advertencia, luz de taller
-    "color_acento": "#F59E0B",        # naranja cálido: llamada a la acción
+    # Paleta casi monocromática. El color se reserva para significado,
+    # nunca para decoración.
+    "color_primario": "#0F766E",      # verde-teca: acción principal / OK
+    "color_secundario": "#B45309",    # ámbar: advertencia
+    "color_acento": "#DC2626",        # rojo: crítica / peligro
     "texto_logo": "GIRO Analytics",
-    # Tokens de estructura (no están en config.toml; se inyectan vía CSS).
-    "fondo_panel": "#0B1120",         # azul noche profundo: fondo de paneles (modo oscuro)
-    "borde_sutil": "#1F2A44",         # borde de panel metálico
-    "texto_suave": "#94A3B8",         # texto secundario, etiquetas
+    # Tokens de estructura (inyectados vía CSS).
+    "fondo_panel": "#0B1120",         # azul noche profundo (modo oscuro)
+    "borde_sutil": "#E2E8F0",         # borde tenue (modo claro)
+    "texto_suave": "#64748B",         # texto secundario, etiquetas
+    "fondo_suave": "#F8FAFC",         # fondo muy suave para secciones
 }
 
 
@@ -36,8 +41,8 @@ def css(tema: dict) -> str:
     """CSS inyectable con las variables de marca del workspace.
 
     Deliberadamente NO sobreescribe los colores globales de la app: el tema
-    base vive en ``.streamlit/config.toml``. Solo expone las variables de marca
-    para usos puntuales (marca en la barra lateral).
+    base vive en .streamlit/config.toml. Solo expone las variables de marca
+    para usos puntuales.
     """
     t = tema_config(tema)
     primario = t["color_primario"]
@@ -57,127 +62,72 @@ def css(tema: dict) -> str:
 
 
 def _css_premium(oscuridad: bool) -> str:
-    """Overlay CSS opcional (pedido por el usuario) con look SaaS.
+    """Overlay CSS minimalista.
 
-    Eleva tarjetas de metricas, paneles con borde y botones primarios con
-    sombras suaves y radios consistentes, adaptandose al modo claro/oscuro.
+    Sustituye las sombras genericas y los radios uniformes por bordes
+    tenues y jerarquía tipográfica. Color solo para significado.
     """
     if oscuridad:
-        fondo_tarjeta = "#0f1c33"
-        borde_tarjeta = "#2a3a5a"
-        sombra_tarjeta = "0 1px 2px rgba(0,0,0,0.35), 0 6px 16px rgba(0,0,0,0.28)"
-        sombra_panel = "0 1px 2px rgba(0,0,0,0.30), 0 3px 10px rgba(0,0,0,0.25)"
+        fondo_tarjeta = "#0B1120"
+        borde_tarjeta = "#1F2A44"
+        texto_suave = "#94A3B8"
     else:
-        fondo_tarjeta = "#ffffff"
-        borde_tarjeta = "#e2e8f0"
-        sombra_tarjeta = "0 1px 2px rgba(30,41,59,0.04), 0 6px 16px rgba(30,41,59,0.06)"
-        sombra_panel = "0 1px 2px rgba(30,41,59,0.04), 0 3px 10px rgba(30,41,59,0.05)"
+        fondo_tarjeta = "#FFFFFF"
+        borde_tarjeta = "#E2E8F0"
+        texto_suave = "#64748B"
 
     return f"""
     <style>
-    [data-testid="stMetric"] {{
-        background: {fondo_tarjeta};
-        border: 1px solid {borde_tarjeta};
-        border-radius: 14px;
-        padding: 0.9rem 1rem;
-        box-shadow: {sombra_tarjeta};
+    /* Paneles: borde tenue, sin sombra generica (ni kit de tarjetas SaaS). */
+    [data-testid="stContainer"] > div[data-testid="stElementContainer"] {{
+        box-shadow: none !important;
     }}
-    [data-testid="stMetricLabel"] p {{
-        font-size: 0.82rem;
-        font-weight: 600;
-        letter-spacing: 0.02em;
-        opacity: 0.75;
+    /* Tablas: filas limpias, numeros a la derecha, grid tenue. */
+    .stDataFrame {{ border: 1px solid {borde_tarjeta}; }}
+    .stDataFrame [role="row"] {{ border-bottom: 1px solid {borde_tarjeta}; }}
+    /* Botones primarios: sin sombra pesada, color solo para accion. */
+    .stButton > button[kind="primary"] {{
+        box-shadow: none !important;
+        background: {primario} !important;
+        border: none !important;
     }}
-    /* metricValueFontSize = 2.5rem fijo desborda cuando una fila de
-       kpi_grid tiene muchas tarjetas (o el valor es largo). Aqui baja
-       con el ancho disponible pero sin pasar de 2.5rem, y el valor se
-       parte en vez de salirse de la tarjeta: el markdown interno de
-       stMetric monta el valor con truncate (white-space: nowrap), que
-       anula overflow-wrap, asi que hay que abrirlo a mano. */
-    [data-testid="stMetricValue"] {{
-        font-size: clamp(1.35rem, 1.1rem + 1vw, 2.5rem);
-        line-height: 1.15;
-    }}
-    [data-testid="stMetricValue"] div,
-    [data-testid="stMetricValue"] span {{
-        white-space: normal !important;
-        overflow-wrap: anywhere;
-    }}
-    [data-testid="stVerticalBlockBorderWrapper"] {{
-        box-shadow: {sombra_panel};
-    }}
-    [data-testid="stBaseButton-primary"] {{
-        box-shadow: {sombra_panel};
-    }}
-    [data-testid="stBadge"] {{
-        border-radius: 999px;
+    .stButton > button[kind="primary"]:hover {{
+        opacity: 0.9;
     }}
     .giro-brand {{ letter-spacing: 0.01em; }}
     .giro-brand::after {{
         content: "";
         display: block;
         width: 2.2rem;
-        height: 3px;
-        border-radius: 2px;
+        height: 2px;
+        border-radius: 1px;
         margin-top: 0.4rem;
-        background: linear-gradient(90deg, var(--giro-primario), var(--giro-secundario));
+        background: {primario};
     }}
     </style>
     """
 
 
 def _css_accesibilidad(oscuridad: bool) -> str:
-    """CSS global de accesibilidad del shell del dashboard.
-
-    Reglas que todo el producto necesita y que ninguna pagina debe
-    repetir: anillo de foco visible para teclado (WCAG 2.4.7), targets
-    interactivos de 44px (WCAG 2.5.5) y el skip-to-content cuyo HTML
-    inyecta ``ui/app.py``. El anillo usa el azul del tema de
-    ``.streamlit/config.toml``: ``#2563eb`` sobre fondo claro (5.2:1
-    contra ``#fbfdff``) y ``#60a5fa`` sobre fondo oscuro (7:1 contra
-    ``#0b1526``); ambos superan los 3:1 exigidos a elementos no-texto.
-    """
+    """CSS global de accesibilidad: foco visible, targets 44px, skip-to-content."""
     contorno = "#60a5fa" if oscuridad else "#2563eb"
     return f"""
     <style>
-    /* Anillo de foco visible (WCAG 2.4.7): el contorno por defecto de
-       estos controles no siempre se ve en claro y en oscuro. */
     .stButton > button:focus-visible,
     .stDownloadButton > button:focus-visible,
     .stFormSubmitButton > button:focus-visible,
     .stLinkButton > a:focus-visible,
-    [data-testid="stLinkButton"] > a:focus-visible,
     [data-testid="stTabs"] [role="tab"]:focus-visible,
-    [data-testid="stTabs"] button:focus-visible,
-    [data-testid="stTextInput"] input:focus-visible,
-    [data-testid="stTextArea"] textarea:focus-visible,
-    [data-testid="stNumberInput"] input:focus-visible,
-    [data-testid="stSelectbox"] button:focus-visible,
-    [data-testid="stMultiSelect"] button:focus-visible,
-    [data-testid="stDateInput"] button:focus-visible,
-    [data-testid="stTimeInput"] button:focus-visible,
-    [data-testid="stColorPicker"] button:focus-visible,
-    [data-testid="stCheckbox"] input:focus-visible,
-    [data-testid="stRadio"] input:focus-visible,
-    [data-testid="stSlider"] [role="slider"]:focus-visible,
-    [data-testid="stToggle"] button:focus-visible,
-    [data-testid="stForm"] input:focus-visible,
-    [data-testid="stForm"] textarea:focus-visible,
-    [data-testid="stForm"] button:focus-visible {{
+    .stTextInput input:focus-visible,
+    .stSelectbox button:focus-visible {{
         outline: 3px solid {contorno};
         outline-offset: 2px;
     }}
-    /* Targets interactivos >= 44px: botones, descargas y envio de
-       formularios (spec Build A; tambien los de barra lateral). */
     [data-testid="stButton"] > button,
-    [data-testid="stDownloadButton"] > button,
-    [data-testid="stFormSubmitButton"] > button,
-    [data-testid="stLinkButton"] > a {{
+    .stDownloadButton > button,
+    .stFormSubmitButton > button {{
         min-height: 44px;
     }}
-    /* Skip-to-content: oculto a la izquierda hasta que recibe foco
-       (mismo patron que landing.py). El par <a id="contenido"> vive en
-       ui/app.py, como primer elemento del area principal. */
     .skip-link {{
         position: absolute;
         left: -9999px;
@@ -200,12 +150,7 @@ def _css_accesibilidad(oscuridad: bool) -> str:
 
 
 def logo_html(texto_logo: str, slogan: str = "") -> str:
-    """Cabecera de marca para el sidebar.
-
-    El texto viene del config del workspace (editable por el tenant), asi que
-    se escapa: sin esto un ``texto_logo`` con ``<img onerror=...>`` se ejecuta
-    en el navegador de todos los usuarios de esa empresa.
-    """
+    """Cabecera de marca para el sidebar."""
     texto = html.escape(str(texto_logo or ""))
     sub = html.escape(str(slogan or ""))
     return (
@@ -217,11 +162,11 @@ def logo_html(texto_logo: str, slogan: str = "") -> str:
 
 
 def aplicar(tema: dict) -> None:
-    """Inyecta el CSS del tema del workspace + overlays premium y de accesibilidad en la pagina."""
+    """Inyecta el CSS del tema del workspace + overlays de accesibilidad."""
     oscuro = False
     try:
         oscuro = st.context.theme.type == "dark"
-    except Exception:  # noqa: BLE001  (st.context fuera de runtime: se asume claro)
+    except Exception:
         oscuro = False
     st.markdown(css(tema) + _css_premium(oscuro) + _css_accesibilidad(oscuro),
                unsafe_allow_html=True)
