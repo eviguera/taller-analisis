@@ -24,7 +24,13 @@ def _selector_workspace(sesion: auth.Sesion):
 
     Solo admin: un ``cliente`` tiene su lista de empresas ya acotada en el
     servidor, asi que el selector no le aportaria nada.
+
+    En modo unico negocio (``GIRO_MODO_UNICO=1``) no hay selector: se asume
+    una sola empresa y no se puede cambiar ni crear nuevas.
     """
+    if context.es_modo_unico():
+        return
+
     opciones = context.workspaces_visibles()
     actual = context.obtener_workspace()
     if actual not in opciones:

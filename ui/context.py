@@ -35,6 +35,35 @@ def en_kiosco() -> bool:
     return _kiosco()
 
 
+def es_modo_unico() -> bool:
+    """True si el negocio es un unico workspace (no multiempresa).
+
+    Cuando esta activo, el usuario no puede cambiar de empresa ni crear
+    nuevos workspaces: GIRO asume que opera una sola pyme con un unico
+    conjunto de datos. Ideal para el cliente final que no es reventor.
+    """
+    import os
+
+    return os.environ.get("GIRO_MODO_UNICO", "").strip().lower() in ("1", "true", "si", "yes", "on")
+
+
+def trabajo_unico() -> str:
+    """Devuelve la clave del workspace unico cuando esta en modo unico.
+
+    Siempre ``principal``. Solo se usa cuando ``es_modo_unico()`` es True.
+    """
+    from src import workspaces
+
+    return workspaces.CLAVE_PRINCIPAL
+    """True si la pagina se sirve en modo presentacion (``?kiosco=1``).
+
+    Las paginas lo consultan para ocultar las acciones que escriben. El
+    kiosco promete solo lectura y esa promesa tiene que valer tambien para
+    un admin que entra con su sesion abierta, no solo para el visitante.
+    """
+    return _kiosco()
+
+
 def _token() -> str:
     """Token de sesion: estado de sesion y, si se pidio, query string."""
     token = st.session_state.get("auth_token") or ""
@@ -108,6 +137,8 @@ def _config_personalizada(workspace, nombre, moneda, slogan, primario=None, acen
 
 def obtener_workspace() -> str:
     """Workspace efectivo, ya acotado a los permisos de la sesion."""
+    if es_modo_unico():
+        return trabajo_unico()
     s = sesion()
     return auth.workspace_permitido(s, st.session_state.get("workspace") or "")
 

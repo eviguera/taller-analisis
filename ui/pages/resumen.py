@@ -11,6 +11,7 @@ from datetime import timedelta
 import pandas as pd
 import streamlit as st
 
+from src.negocio import planes_activos
 from ui import components as c
 from ui.context import obtener_estado
 
@@ -202,6 +203,32 @@ def principal():
     with st.expander("Ver datos crudos (filtrados)", icon=":material/table_rows:"):
         c.dataframe(filtrado.drop(columns=["detalles"], errors="ignore"),
                     alto=300)
+
+    # ---- Precios y contratacion ----
+    st.divider()
+    st.markdown("### Planes de GIRO")
+    planes = planes_activos(cfg)
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        with c.panel("Core", "Para pyme que empieza", icono=":material/credit_card:"):
+            precio_core = planes.get("Core")
+            if precio_core:
+                st.markdown(f"**{c.moneda(precio_core, cfg.moneda)}/mes**")
+                st.caption("ETL + almacen DuckDB · 9 dashboards · 1 modelo")
+                if st.button("Contratar Core", key="contratar_core", width="stretch"):
+                    st.info("Pronto: pago con tarjeta desde aquí.")
+            else:
+                st.info("Plan no disponible")
+    with col_p2:
+        with c.panel("Pro", "Para pyme en crecimiento", icono=":material/trending_up:"):
+            precio_pro = planes.get("Pro")
+            if precio_pro:
+                st.markdown(f"**{c.moneda(precio_pro, cfg.moneda)}/mes**")
+                st.caption("Todo Core + Giro Recomienda · Mantenimiento predictivo · Alertas + email")
+                if st.button("Contratar Pro", key="contratar_pro", width="stretch"):
+                    st.info("Pronto: pago con tarjeta desde aquí.")
+            else:
+                st.info("Plan no disponible")
 
 
 if __name__ == "__main__":

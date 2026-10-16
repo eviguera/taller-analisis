@@ -138,28 +138,38 @@ def principal():
     with col2:
         if en_kiosco():
             st.caption("Modo presentacion: el envio se hace fuera del kiosco.")
-        if st.button("Enviar por email", icon=":material/send:", disabled=en_kiosco()):
-            exigir_escritura("Solo un administrador puede enviar alertas por email.")
-            with st.spinner("Enviando alertas por email…"):
-                try:
-                    envio = enviar_email(
-                        cfg,
-                        f"[GIRO] Alertas de {cfg.negocio_nombre}",
-                        _html_alerta(alertas, cfg),
+        else:
+            if st.button(
+                "Enviarme resumen por email",
+                type="primary",
+                icon=":material/send:",
+                disabled=en_kiosco(),
+                width="stretch",
+            ):
+                # En modo unico negocio cualquier usuario puede enviar;
+                # en modo multiempresa solo administrador.
+                if not context.es_modo_unico():
+                    exigir_escritura("Solo un administrador puede enviar alertas por email.")
+                with st.spinner("Enviando alertas por email…"):
+                    try:
+                        envio = enviar_email(
+                            cfg,
+                            f"[GIRO] Alertas de {cfg.negocio_nombre}",
+                            _html_alerta(alertas, cfg),
+                        )
+                    except Exception as e:
+                        envio = False
+                        c.mensaje_error(
+                            "No se pudo enviar el email de alertas.",
+                            detalle=str(e) if str(e) else "Revisa la configuración SMTP en alertas.smtp del workspace.",
+                        )
+                if envio:
+                    st.success("Alertas enviadas por email.")
+                else:
+                    st.error(
+                        "No se pudo enviar el email. Revisa la configuración "
+                        "`alertas.smtp` y las credenciales SMTP del entorno."
                     )
-                except Exception as e:
-                    envio = False
-                    c.mensaje_error(
-                        "No se pudo enviar el email de alertas.",
-                        detalle=str(e) if str(e) else "Revisa la configuración SMTP en alertas.smtp del workspace.",
-                    )
-            if envio:
-                st.success("Alertas enviadas por email.")
-            elif not en_kiosco():
-                st.error(
-                    "No se pudo enviar el email. Revisa la configuración "
-                    "`alertas.smtp` y las credenciales SMTP del entorno."
-                )
 
 
 def _html_alerta(alertas, cfg):

@@ -246,6 +246,15 @@ def dataframe(df, etiquetas=None, column_config=None, alto=None,
 
 
 # ------------------------------------------------------------------
+#  Formato de archivo
+# ------------------------------------------------------------------
+
+def formato_archivo(fmt):
+    """Etiqueta de formato para una celda de tabla (texto plano)."""
+    return _f_formato_archivo(fmt)
+
+
+# ------------------------------------------------------------------
 #  Descargas
 # ------------------------------------------------------------------
 
