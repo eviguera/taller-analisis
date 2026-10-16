@@ -27,26 +27,26 @@ from src.formatos import (
 )
 
 # ------------------------------------------------------------------
-#  Paleta suave: azul, gris y verde (sincronizada con config.toml)
+#  Paleta de tablero de taller (sincronizada con ui/theme.py)
+#  Colores con identidad: verde-teca (inspección), ámbar (advertencia),
+#  naranja (acción), azul noche (fondos). Nada de azul SaaS genérico.
 # ------------------------------------------------------------------
 PALETA = {
-    "primario": "#2563eb",        # azul
-    "azul_suave": "#60a5fa",
-    "cielo": "#0ea5e9",
-    "exito": "#059669",           # verde esmeralda
-    "verde": "#16a34a",
-    "esmeralda_suave": "#10b981",
-    "alerta": "#d97706",
-    "peligro": "#dc2626",
+    "primario": "#0F766E",        # verde-teca: inspección, aceite limpio
+    "primario_suave": "#34D399",
+    "secundario": "#B45309",      # ámbar: advertencia, luz de taller
+    "acento": "#F59E0B",          # naranja cálido: acción
+    "fondo_panel": "#0B1120",     # azul noche profundo: fondos de panel
+    "borde_sutil": "#1F2A44",     # borde de panel metálico
+    "texto_suave": "#94A3B8",     # texto secundario, etiquetas
+    "peligro": "#DC2626",
     "gris": "#64748b",
     "gris_suave": "#94a3b8",
-    "pizarra": "#1e293b",
-    "pizarra_claro": "#e2e8f0",
 }
 
 SECUENCIA_COLORES = [
-    PALETA["primario"], PALETA["cielo"], PALETA["exito"], PALETA["verde"],
-    PALETA["azul_suave"], PALETA["esmeralda_suave"], PALETA["gris"], PALETA["gris_suave"],
+    PALETA["primario"], PALETA["primario_suave"], PALETA["secundario"],
+    PALETA["acento"], PALETA["peligro"], PALETA["gris"], PALETA["gris_suave"],
 ]
 
 MESES_ES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
@@ -116,12 +116,22 @@ def titulo_seccion(titulo, subtitulo=None, icono=None):
 
 @contextmanager
 def panel(titulo, subtitulo=None, icono=None, alto=None):
-    """Tarjeta con borde y encabezado para agrupar un grafico/tabla."""
+    """Panel con borde metálico para agrupar un grafico/tabla.
+
+    Sin sombras genericas (ese es el kit de tarjetas SaaS). Solo un borde
+    de 1px en color sutil y un encabezado con el color primario del tema.
+    """
     kw = {"border": True}
     if alto:
         kw["height"] = alto
     with st.container(**kw):
-        st.markdown(f"**{icono + ' ' if icono else ''}{titulo}**")
+        st.markdown(
+            f"<div style='color:{PALETA['texto_suave']};font-size:0.8rem;"
+            f"text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;'"
+            f" border-bottom:1px solid {PALETA['borde_sutil']};"
+            f"padding-bottom:0.4rem;'>{icono + ' ' if icono else ''}{titulo}</div>",
+            unsafe_allow_html=True,
+        )
         if subtitulo:
             st.caption(subtitulo)
         yield
@@ -132,24 +142,49 @@ def panel(titulo, subtitulo=None, icono=None, alto=None):
 # ------------------------------------------------------------------
 
 def kpi_grid(items):
-    """Renderiza una fila de KPIs como st.metric nativos con tarjeta (border).
+    """Renderiza una fila de KPIs como lecturas de aguja en tablero de taller.
 
     items: lista de tuplas
         (etiqueta, valor[, delta[, tendencia[, ayuda]]])
       - delta: string de variacion (p. ej. "+12%")
       - tendencia: secuencia de numeros para el mini-grafico (sparkline)
       - ayuda: texto informativo
+
+    El primer ítem es la "aguja principal": valor más grande y color primario.
+    El resto son lecturas secundarias, más discretas. Nada de tarjetas idénticas
+    con borde redondeado uniforme (ese es el kit genérico de SaaS).
     """
     with st.container(horizontal=True):
-        for item in items:
+        for i, item in enumerate(items):
             etiqueta, valor = item[0], item[1]
             delta = item[2] if len(item) > 2 else None
-            tendencia = item[3] if len(item) > 3 else None
             ayuda = item[4] if len(item) > 4 else None
-            st.metric(
-                etiqueta, valor, delta=delta, help=ayuda, border=True,
-                chart_data=tendencia, chart_type="line",
-            )
+            es_primario = i == 0
+            with st.container(border=True):
+                if es_primario:
+                    st.markdown(
+                        f"<div style='color:{PALETA['texto_suave']};font-size:0.85rem;"
+                        f"text-transform:uppercase;letter-spacing:0.08em;'>{etiqueta}</div>"
+                        f"<div style='color:{PALETA['primario']};font-size:2rem;"
+                        f"font-weight:700;'>{valor}</div>"
+                        f"{f'<div style=\"color:{PALETA['primario_suave']};font-size:0.8rem;\" '
+                        f'>{delta}</div>' if delta else ''}"
+                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.75rem;\" '
+                        f'>{ayuda}</div>' if ayuda else ''}",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='color:{PALETA['texto_suave']};font-size:0.75rem;"
+                        f"text-transform:uppercase;letter-spacing:0.05em;'>{etiqueta}</div>"
+                        f"<div style='color:{PALETA['primario_suave']};font-size:1.35rem;"
+                        f"font-weight:600;'>{valor}</div>"
+                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.7rem;\" '
+                        f'>{delta}</div>' if delta else ''}"
+                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.68rem;\" '
+                        f'>{ayuda}</div>' if ayuda else ''}",
+                        unsafe_allow_html=True,
+                    )
 
 
 def vacio(mensaje, icono=":material/info:", detalle=None, cta=None):
@@ -215,12 +250,24 @@ def formato_archivo(fmt):
 
 
 def badge(texto, tipo="info"):
-    """Badge en markdown usando el sistema nativo de Streamlit (sin CSS)."""
-    estilo = {
-        "verde": "green", "rojo": "red", "amarillo": "orange",
-        "azul": "blue", "info": "violet",
-    }.get(tipo, "gray")
-    return f":{estilo}-badge[{texto}]"
+    """Badge con colores de la paleta de taller y borde suave.
+
+    Sin estilo píldora (border-radius: 9999px): ese es un tell de IA
+    generativa. Usa border-radius leve (4px) y colores de la paleta.
+    """
+    color = {
+        "verde": PALETA["primario"],        # verde-teca
+        "rojo": PALETA["peligro"],          # rojo peligro
+        "amarillo": PALETA["secundario"],   # ámbar advertencia
+        "azul": PALETA["primario"],         # azul noche / primario
+        "info": PALETA["texto_suave"],      # gris suave
+        "acento": PALETA["acento"],         # naranja acción
+    }.get(tipo, PALETA["texto_suave"])
+    return (
+        f"<span style='background:{color};color:#ffffff;padding:2px 8px;"
+        f"border-radius:4px;font-size:0.75rem;font-weight:600;"
+        f"text-transform:uppercase;letter-spacing:0.05em;'>{texto}</span>"
+    )
 
 
 # ------------------------------------------------------------------
@@ -319,7 +366,7 @@ def _layout(fig, titulo="", leyenda=True):
         hovermode="x unified",
         bargap=0.35,
     )
-    grid = "rgba(148,163,184,0.12)" if _es_oscuro() else "rgba(148,163,184,0.20)"
+    grid = "rgba(31,42,68,0.35)" if _es_oscuro() else "rgba(31,42,68,0.15)"
     fig.update_xaxes(gridcolor=grid, zeroline=False)
     fig.update_yaxes(gridcolor=grid, zeroline=False)
     return fig

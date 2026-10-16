@@ -11,10 +11,16 @@ import html
 import streamlit as st
 
 DEFAULT_TEMA = {
-    "color_primario": "#7C4DFF",
-    "color_secundario": "#00C2A8",
-    "color_acento": "#FFB020",
+    # Paleta con identidad de taller mecánico / tablero de control.
+    # Evita colores SaaS genéricos (azul #2563eb, verde #059669 estándar).
+    "color_primario": "#0F766E",      # verde-teca: inspección, aceite limpio, acción principal
+    "color_secundario": "#B45309",    # ámbar: advertencia, luz de taller
+    "color_acento": "#F59E0B",        # naranja cálido: llamada a la acción
     "texto_logo": "GIRO Analytics",
+    # Tokens de estructura (no están en config.toml; se inyectan vía CSS).
+    "fondo_panel": "#0B1120",         # azul noche profundo: fondo de paneles (modo oscuro)
+    "borde_sutil": "#1F2A44",         # borde de panel metálico
+    "texto_suave": "#94A3B8",         # texto secundario, etiquetas
 }
 
 
