@@ -8,9 +8,24 @@ from ui.context import obtener_estado
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de inventario.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
-    inv = analyzer.inventario_data()
+    try:
+        inv = analyzer.inventario_data()
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudo calcular el estado del inventario.",
+            detalle=str(e) if str(e) else "Revisa que existan productos de inventario cargados.",
+        )
+        return
+
     c.cabecera(
         "Inventario",
         "Niveles de stock, valor y rotacion de repuestos",
@@ -24,12 +39,19 @@ def principal():
         )
         return
 
-    with st.spinner("Calculando la reposicion sugerida..."):
-        pred_inv = predictor.predecir_inventario()
+    try:
+        with st.spinner("Calculando la reposicion sugerida..."):
+            pred_inv = predictor.predecir_inventario()
+    except Exception as ex:
+        c.mensaje_error(
+            "No se pudo calcular la reposición sugerida.",
+            detalle=str(ex) if str(ex) else "Revisa que existan servicios vendidos con mapeo a categorías de producto.",
+        )
+        pred_inv = None
 
     valor_total = inv["valor_inventario"].sum()
     stock_bajo = int((inv["estado_stock"] == "Bajo").sum())
-    reabastecer = int((pred_inv["recomendacion"] == "Reabastecer").sum())
+    reabastecer = 0 if pred_inv is None else int((pred_inv["recomendacion"] == "Reabastecer").sum())
     margen_prom = inv["margen_pct"].mean()
 
     c.kpi_grid([
@@ -95,33 +117,40 @@ def principal():
 
     with tab_repos:
         if tab_repos.open:
-            orden_repo = pred_inv.sort_values("meses_cobertura", ascending=True)
-            with c.panel("Meses de cobertura", "Menor cobertura = mayor urgencia",
-                         icono=":material/update:"):
-                c.mostrar_grafico(c.grafico_barras(
-                    orden_repo, "producto", "meses_cobertura", color="recomendacion",
-                    etiquetas={"producto": "Producto", "meses_cobertura": "Meses"},
-                ), width="stretch", height="stretch")
-            faltan = pred_inv[pred_inv["recomendacion"] == "Reabastecer"]
-            if not faltan.empty:
-                st.warning(f"Hay {c.miles(len(faltan))} productos que requieren pedido inmediato.",
-                           icon=":material/priority_high:")
-                with c.panel("Detalle del pedido", "Unidades a pedir de cada producto"):
-                    c.dataframe(
-                        faltan[["producto", "categoria", "stock_actual", "stock_minimo",
-                                "demanda_mensual", "meses_cobertura", "cantidad_recomendada"]],
-                        column_config={
-                            "producto": st.column_config.TextColumn("Producto"),
-                            "categoria": st.column_config.TextColumn("Categoria"),
-                            "stock_actual": st.column_config.NumberColumn("Stock actual"),
-                            "stock_minimo": st.column_config.NumberColumn("Stock minimo"),
-                            "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
-                            "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
-                            "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
-                        },
-                    )
+            if pred_inv is None:
+                c.vacio(
+                    "No se pudo calcular la reposición sugerida.",
+                    icono=":material/update:",
+                    detalle="Revisa que existan servicios vendidos con mapeo a categorías de producto.",
+                )
             else:
-                st.success("Stock suficiente: no hay productos criticos.", icon=":material/verified:")
+                orden_repo = pred_inv.sort_values("meses_cobertura", ascending=True)
+                with c.panel("Meses de cobertura", "Menor cobertura = mayor urgencia",
+                             icono=":material/update:"):
+                    c.mostrar_grafico(c.grafico_barras(
+                        orden_repo, "producto", "meses_cobertura", color="recomendacion",
+                        etiquetas={"producto": "Producto", "meses_cobertura": "Meses"},
+                    ), width="stretch", height="stretch")
+                faltan = pred_inv[pred_inv["recomendacion"] == "Reabastecer"]
+                if not faltan.empty:
+                    st.warning(f"Hay {c.miles(len(faltan))} productos que requieren pedido inmediato.",
+                               icon=":material/priority_high:")
+                    with c.panel("Detalle del pedido", "Unidades a pedir de cada producto"):
+                        c.dataframe(
+                            faltan[["producto", "categoria", "stock_actual", "stock_minimo",
+                                    "demanda_mensual", "meses_cobertura", "cantidad_recomendada"]],
+                            column_config={
+                                "producto": st.column_config.TextColumn("Producto"),
+                                "categoria": st.column_config.TextColumn("Categoria"),
+                                "stock_actual": st.column_config.NumberColumn("Stock actual"),
+                                "stock_minimo": st.column_config.NumberColumn("Stock minimo"),
+                                "demanda_mensual": st.column_config.NumberColumn("Demanda (unid/mes)", format="%.1f"),
+                                "meses_cobertura": st.column_config.NumberColumn("Cobertura (meses)", format="%.1f"),
+                                "cantidad_recomendada": st.column_config.NumberColumn("Pedir (unid)"),
+                            },
+                        )
+                else:
+                    st.success("Stock suficiente: no hay productos criticos.", icon=":material/verified:")
 
     with tab_margen:
         if tab_margen.open:

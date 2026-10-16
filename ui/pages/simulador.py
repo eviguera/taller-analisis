@@ -25,7 +25,14 @@ def _aplicar_preset(nombre):
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos del simulador.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     df = analyzer.df
     if df.empty or "fecha" not in df.columns or "total" not in df.columns:
@@ -114,16 +121,26 @@ def principal():
         )
 
     gasto_fijo = base["ingresos_12m"] / max(12, base["meses_muestra"] or 1) * (gasto_fijo_pct / 100)
-    resultado = proyectar(
-        df, meses=12,
-        crecimiento_anual=crec / 100.0,
-        ticket_crecimiento=tick / 100.0,
-        churn_mensual=churn_cfg / 100.0,
-        efecto_giro_nba=nba / 100.0,
-        margen_bruto=margen / 100.0,
-        gasto_fijo_mensual=gasto_fijo,
-        ratios=ratios,
-    )
+    try:
+        resultado = proyectar(
+            df, meses=12,
+            crecimiento_anual=crec / 100.0,
+            ticket_crecimiento=tick / 100.0,
+            churn_mensual=churn_cfg / 100.0,
+            efecto_giro_nba=nba / 100.0,
+            margen_bruto=margen / 100.0,
+            gasto_fijo_mensual=gasto_fijo,
+            ratios=ratios,
+        )
+    except Exception as ex:
+        c.mensaje_error(
+            "No se pudo calcular la proyección del simulador.",
+            detalle=str(ex) if str(ex) else "Revisa que existan facturas con fechas válidas en los últimos 12 meses.",
+        )
+        resultado = None
+
+    if resultado is None:
+        return
 
     proy = resultado["proyeccion"]
     totales = resultado["totales"]

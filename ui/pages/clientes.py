@@ -8,9 +8,23 @@ from ui.context import obtener_estado
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de clientes.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
-    rfm = analyzer.clientes_rfm()
+    try:
+        rfm = analyzer.clientes_rfm()
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudo calcular la segmentación RFM de clientes.",
+            detalle=str(e) if str(e) else "Revisa que existan facturas con cliente asociado.",
+        )
+        return
     if rfm.empty:
         c.vacio(
             "Todavia no hay facturas con clientes para analizar.",
@@ -132,8 +146,15 @@ def principal():
 
     with tab_plan:
         if tab_plan.open:
-            sugerencias = predictor.proxima_factura_demanda()
-            if not sugerencias.empty:
+            try:
+                sugerencias = predictor.proxima_factura_demanda()
+            except Exception as e:
+                c.mensaje_error(
+                    "No se pudieron calcular las sugerencias de contacto.",
+                    detalle=str(e) if str(e) else "Revisa que existan facturas con fechas de visita.",
+                )
+                sugerencias = None
+            if sugerencias is None or sugerencias.empty:
                 with c.panel("Clientes sugeridos para contacto",
                              "Acciones recomendadas por recencia de visita",
                              icono=":material/campaign:"):

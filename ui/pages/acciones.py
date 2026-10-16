@@ -43,7 +43,14 @@ def _resumen_metricas(evaluacion, moneda):
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de acciones recomendadas.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     c.cabecera(
         "Acciones recomendadas",
@@ -58,8 +65,15 @@ def principal():
 
     with tab_aba:
         if tab_aba.open:
-            acciones = next_best_action(data, cfg, predictor=predictor)
-            if acciones.empty:
+            try:
+                acciones = next_best_action(data, cfg, predictor=predictor)
+            except Exception as e:
+                c.mensaje_error(
+                    "No se pudieron calcular las acciones por cliente.",
+                    detalle=str(e) if str(e) else "Revisa que existan facturas y clientes con historial.",
+                )
+                acciones = None
+            if acciones is None or acciones.empty:
                 c.vacio("Sin facturas suficientes para calcular acciones.",
                         icono=":material/task_alt:",
                         detalle="Se necesitan facturas y clientes con historial. "
@@ -110,8 +124,15 @@ def principal():
 
     with tab_mant:
         if tab_mant.open:
-            progs = proximo_servicio(data, cfg)
-            if progs.empty:
+            try:
+                progs = proximo_servicio(data, cfg)
+            except Exception as e:
+                c.mensaje_error(
+                    "No se pudo calcular el próximo servicio por vehículo.",
+                    detalle=str(e) if str(e) else "Revisa que existan vehículos y facturas con fechas de servicio.",
+                )
+                progs = None
+            if progs is None or progs.empty:
                 c.vacio("Sin vehiculos o sin facturas para proyectar el mantenimiento.",
                         icono=":material/directions_car:",
                         detalle="Importa tus vehiculos y facturas en 'Mis datos' "
@@ -159,7 +180,14 @@ def principal():
             c.titulo_seccion("Registro de modelos",
                              "Se guardan y se usan en cada visita sin volver a entrenar",
                              icono=":material/model_training:")
-            modelos = predictor.registro_modelos()
+            try:
+                modelos = predictor.registro_modelos()
+            except Exception as e:
+                c.mensaje_error(
+                    "No se pudo leer el registro de modelos.",
+                    detalle=str(e) if str(e) else "Revisa que el directorio de modelos del workspace sea accesible.",
+                )
+                modelos = None
             if modelos:
                 filas = []
                 for m in modelos:

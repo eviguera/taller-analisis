@@ -66,7 +66,14 @@ def _boton_descarga(ruta_html: str):
 
 
 def principal():
-    cfg, data, _, _ = obtener_estado()
+    try:
+        cfg, data, _, _ = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de reportes.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     c.cabecera(
         "Reportes ejecutivos",
@@ -188,7 +195,14 @@ def principal():
     #  Historial de reportes generados en este workspace
     # ------------------------------------------------------------------
     st.header("Reportes generados", icon=":material/history:")
-    generados = listar_generados(cfg)
+    try:
+        generados = listar_generados(cfg)
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudo leer el historial de reportes.",
+            detalle=str(e) if str(e) else "Revisa que el directorio de reportes del workspace sea accesible.",
+        )
+        generados = []
     if not generados:
         c.vacio("Aún no hay reportes de este workspace.",
                 icono=":material/history:",

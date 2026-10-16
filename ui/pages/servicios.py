@@ -8,11 +8,25 @@ from ui.context import obtener_estado
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de servicios.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
-    servicios = data.get("servicios", pd.DataFrame())
-    n_servicios = len(servicios)
-    detalle = analyzer.detalle_servicios() if not data.get("facturas", pd.DataFrame()).empty else pd.DataFrame()
+    try:
+        servicios = data.get("servicios", pd.DataFrame())
+        n_servicios = len(servicios)
+        detalle = analyzer.detalle_servicios() if not data.get("facturas", pd.DataFrame()).empty else pd.DataFrame()
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudo leer el detalle de servicios.",
+            detalle=str(e) if str(e) else "Revisa que existan facturas con columna 'detalles'.",
+        )
+        return
 
     if detalle.empty:
         c.vacio(

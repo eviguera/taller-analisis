@@ -57,7 +57,14 @@ textarea:focus-visible, select:focus-visible, [role="tab"]:focus-visible {{
 
 def principal():
     _css_estructura()
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de alertas.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     c.cabecera(
         "Alertas",
@@ -65,8 +72,15 @@ def principal():
         icono=":material/notifications_active:",
     )
 
-    alertas = evaluar_alertas(cfg, data, analyzer=analyzer, predictor=predictor)
-    res = resumen_alertas(alertas)
+    try:
+        alertas = evaluar_alertas(cfg, data, analyzer=analyzer, predictor=predictor)
+        res = resumen_alertas(alertas)
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudieron evaluar las reglas de alerta.",
+            detalle=str(e) if str(e) else "Revisa que existan datos de inventario y facturación.",
+        )
+        return
 
     c.kpi_grid([
         ("Alertas activas", c.miles(res['total']), None, None, "Reglas que se dispararon"),
@@ -103,29 +117,45 @@ def principal():
         if st.button("Generar reporte HTML", type="primary",
                      icon=":material/description:", disabled=en_kiosco()):
             with st.status("Generando reporte…", expanded=False) as estado:
-                ruta = generar_reporte_alertas(cfg, data, alertas)
-            estado.update(label="Reporte listo", state="complete", expanded=False)
-            st.success(f"Reporte generado: `{ruta.name}`. Descárgalo abajo.")
-            with open(ruta, "rb") as fh:
-                st.download_button(
-                    "Descargar reporte", fh.read(),
-                    file_name=ruta.name, mime="text/html",
-                    icon=":material/download:",
-                )
+                try:
+                    ruta = generar_reporte_alertas(cfg, data, alertas)
+                except Exception as e:
+                    estado.update(label="Error generando reporte", state="error", expanded=False)
+                    c.mensaje_error(
+                        "No se pudo generar el reporte HTML.",
+                        detalle=str(e) if str(e) else "Revisa que exista el directorio de reportes del workspace.",
+                    )
+                    ruta = None
+            if ruta is not None:
+                estado.update(label="Reporte listo", state="complete", expanded=False)
+                st.success(f"Reporte generado: `{ruta.name}`. Descárgalo abajo.")
+                with open(ruta, "rb") as fh:
+                    st.download_button(
+                        "Descargar reporte", fh.read(),
+                        file_name=ruta.name, mime="text/html",
+                        icon=":material/download:",
+                    )
     with col2:
         if en_kiosco():
             st.caption("Modo presentacion: el envio se hace fuera del kiosco.")
         if st.button("Enviar por email", icon=":material/send:", disabled=en_kiosco()):
             exigir_escritura("Solo un administrador puede enviar alertas por email.")
             with st.spinner("Enviando alertas por email…"):
-                envio = enviar_email(
-                    cfg,
-                    f"[GIRO] Alertas de {cfg.negocio_nombre}",
-                    _html_alerta(alertas, cfg),
-                )
+                try:
+                    envio = enviar_email(
+                        cfg,
+                        f"[GIRO] Alertas de {cfg.negocio_nombre}",
+                        _html_alerta(alertas, cfg),
+                    )
+                except Exception as e:
+                    envio = False
+                    c.mensaje_error(
+                        "No se pudo enviar el email de alertas.",
+                        detalle=str(e) if str(e) else "Revisa la configuración SMTP en alertas.smtp del workspace.",
+                    )
             if envio:
                 st.success("Alertas enviadas por email.")
-            else:
+            elif not en_kiosco():
                 st.error(
                     "No se pudo enviar el email. Revisa la configuración "
                     "`alertas.smtp` y las credenciales SMTP del entorno."

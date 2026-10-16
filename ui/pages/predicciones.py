@@ -8,7 +8,14 @@ from ui.context import obtener_estado
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de predicciones.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     n_facturas = len(data.get("facturas", pd.DataFrame()))
     c.cabecera(
@@ -47,66 +54,81 @@ def principal():
                 )
             else:
                 meses = st.slider("Meses a proyectar", 1, 12, 6, key="meses_ing")
-                with st.spinner("Calculando la proyeccion de ingresos..."):
-                    res = predictor.predecir_ingresos(meses_futuros=meses)
-
-                if res.get("evaluacion"):
-                    ev = res["evaluacion"]
-                    c.kpi_grid([
-                        ("Error promedio", c.moneda(ev.get("mae", 0), cfg.moneda), None, None,
-                         "MAE: diferencia media entre lo proyectado y lo real, al mes"),
-                        ("Error con picos", c.moneda(ev.get("rmse", 0), cfg.moneda), None, None,
-                         "RMSE: como el Error promedio, pero penaliza los meses con mas error"),
-                        ("Error en porcentaje", f"{ev.get('mape', 0):.1f}%", None, None,
-                         "MAPE: error promedio de la proyeccion mensual, en porcentaje"),
-                    ])
-
-                hist = res["historial"].rename(columns={"anio_mes": "Periodo", "ingresos": "Valor"}).assign(tipo="Historial")
-                pred = res["predicciones"].rename(columns={"fecha": "Periodo", "ingresos_predichos": "Valor"}).assign(tipo="Prediccion")
-                combinado = pd.concat([hist, pred])
-                with c.panel("Ingresos historicos y proyeccion", "Historial real frente a proyeccion",
-                             icono=":material/trending_up:"):
-                    fig = c.grafico_linea(
-                        combinado, "Periodo", "Valor", color="tipo",
-                        etiquetas={"Periodo": "Mes", "Valor": "Ingresos"},
+                try:
+                    with st.spinner("Calculando la proyeccion de ingresos..."):
+                        res = predictor.predecir_ingresos(meses_futuros=meses)
+                except Exception as ex:
+                    c.mensaje_error(
+                        "No se pudo calcular la proyeccion de ingresos.",
+                        detalle=str(ex) if str(ex) else "Revisa que existan al menos 5 meses de facturas con fechas validas.",
                     )
-                    # Linea separadora entre historico y prediccion
-                    if not hist.empty and not pred.empty:
-                        fig.add_vline(x=len(hist) - 0.5, line_dash="dash",
-                                      line_color="gray", annotation_text="Prediccion")
-                    c.mostrar_grafico(fig)
+                    res = None
 
-                col1, col2 = st.columns(2, vertical_alignment="center")
-                with col1:
-                    with c.panel("Proyeccion", "Ingresos estimados a futuro"):
-                        c.dataframe(res["predicciones"], column_config={
-                            "fecha": st.column_config.TextColumn("Mes"),
-                            "ingresos_predichos": st.column_config.NumberColumn(
-                                "Ingresos proyectados", format=c.formato_moneda(cfg.moneda)),
-                            "ic_inferior": st.column_config.NumberColumn(
-                                "Minimo probable", format=c.formato_moneda(cfg.moneda),
-                                help="Limite inferior del rango probable (95 de cada 100 veces)"),
-                            "ic_superior": st.column_config.NumberColumn(
-                                "Maximo probable", format=c.formato_moneda(cfg.moneda),
-                                help="Limite superior del rango probable (95 de cada 100 veces)"),
-                        })
-                with col2:
-                    with c.panel("Historico (ultimos 12)", "Ingresos observados recientes"):
-                        c.dataframe(hist[["Periodo", "Valor"]].tail(12),
-                                    column_config={
-                                         "Periodo": st.column_config.TextColumn("Mes"),
-                                         "Valor": st.column_config.NumberColumn(
-                                             "Ingresos", format=c.formato_moneda(cfg.moneda)),
-                                     })
+                if res is not None:
+                    if res.get("evaluacion"):
+                        ev = res["evaluacion"]
+                        c.kpi_grid([
+                            ("Error promedio", c.moneda(ev.get("mae", 0), cfg.moneda), None, None,
+                             "MAE: diferencia media entre lo proyectado y lo real, al mes"),
+                            ("Error con picos", c.moneda(ev.get("rmse", 0), cfg.moneda), None, None,
+                             "RMSE: como el Error promedio, pero penaliza los meses con mas error"),
+                            ("Error en porcentaje", f"{ev.get('mape', 0):.1f}%", None, None,
+                             "MAPE: error promedio de la proyeccion mensual, en porcentaje"),
+                        ])
+
+                    hist = res["historial"].rename(columns={"anio_mes": "Periodo", "ingresos": "Valor"}).assign(tipo="Historial")
+                    pred = res["predicciones"].rename(columns={"fecha": "Periodo", "ingresos_predichos": "Valor"}).assign(tipo="Prediccion")
+                    combinado = pd.concat([hist, pred])
+                    with c.panel("Ingresos historicos y proyeccion", "Historial real frente a proyeccion",
+                                 icono=":material/trending_up:"):
+                        fig = c.grafico_linea(
+                            combinado, "Periodo", "Valor", color="tipo",
+                            etiquetas={"Periodo": "Mes", "Valor": "Ingresos"},
+                        )
+                        # Linea separadora entre historico y prediccion
+                        if not hist.empty and not pred.empty:
+                            fig.add_vline(x=len(hist) - 0.5, line_dash="dash",
+                                          line_color="gray", annotation_text="Prediccion")
+                        c.mostrar_grafico(fig)
+
+                    col1, col2 = st.columns(2, vertical_alignment="center")
+                    with col1:
+                        with c.panel("Proyeccion", "Ingresos estimados a futuro"):
+                            c.dataframe(res["predicciones"], column_config={
+                                "fecha": st.column_config.TextColumn("Mes"),
+                                "ingresos_predichos": st.column_config.NumberColumn(
+                                    "Ingresos proyectados", format=c.formato_moneda(cfg.moneda)),
+                                "ic_inferior": st.column_config.NumberColumn(
+                                    "Minimo probable", format=c.formato_moneda(cfg.moneda),
+                                    help="Limite inferior del rango probable (95 de cada 100 veces)"),
+                                "ic_superior": st.column_config.NumberColumn(
+                                    "Maximo probable", format=c.formato_moneda(cfg.moneda),
+                                    help="Limite superior del rango probable (95 de cada 100 veces)"),
+                            })
+                    with col2:
+                        with c.panel("Historico (ultimos 12)", "Ingresos observados recientes"):
+                            c.dataframe(hist[["Periodo", "Valor"]].tail(12),
+                                        column_config={
+                                             "Periodo": st.column_config.TextColumn("Mes"),
+                                             "Valor": st.column_config.NumberColumn(
+                                                 "Ingresos", format=c.formato_moneda(cfg.moneda)),
+                                         })
 
     with tab_dem:
         if tab_dem.open:
             c.titulo_seccion("Demanda proyectada por servicio",
                              "Cuanto se va a pedir de cada servicio en los proximos 6 meses",
                              icono=":material/query_stats:")
-            with st.spinner("Calculando la demanda por servicio..."):
-                dem = predictor.predecir_demanda(horizonte_meses=6)
-            if dem["predicciones"].empty:
+            try:
+                with st.spinner("Calculando la demanda por servicio..."):
+                    dem = predictor.predecir_demanda(horizonte_meses=6)
+            except Exception as ex:
+                c.mensaje_error(
+                    "No se pudo calcular la demanda por servicio.",
+                    detalle=str(ex) if str(ex) else "Revisa que existan servicios con fechas de factura.",
+                )
+                dem = None
+            if dem is None or dem["predicciones"].empty:
                 c.vacio("Datos insuficientes para proyectar la demanda.",
                         icono=":material/query_stats:",
                         detalle="Se necesitan varios meses de facturas con servicios. "
@@ -138,10 +160,16 @@ def principal():
             c.titulo_seccion("Probabilidad de churn",
                              "Riesgo de que un cliente deje de comprar, segun su ultima visita",
                              icono=":material/person_off:")
-            with st.spinner("Calculando el riesgo de cada cliente..."):
-                churn = predictor.predecir_churn()
-
-            if churn.get("evaluacion"):
+            try:
+                with st.spinner("Calculando el riesgo de cada cliente..."):
+                    churn = predictor.predecir_churn()
+            except Exception as ex:
+                c.mensaje_error(
+                    "No se pudo calcular el riesgo de churn.",
+                    detalle=str(ex) if str(ex) else "Revisa que existan clientes con historial de facturas.",
+                )
+                churn = None
+            if churn is not None and churn.get("evaluacion"):
                 ev = churn["evaluacion"]
                 if ev.get("accuracy") is not None:
                     c.kpi_grid([
@@ -206,9 +234,16 @@ def principal():
             c.titulo_seccion("Reposicion sugerida de inventario",
                              "Cuanto stock te queda y cuando conviene pedir",
                              icono=":material/inventory_2:")
-            with st.spinner("Calculando la reposicion sugerida..."):
-                inv_pred = predictor.predecir_inventario()
-            if inv_pred.empty:
+            try:
+                with st.spinner("Calculando la reposicion sugerida..."):
+                    inv_pred = predictor.predecir_inventario()
+            except Exception as ex:
+                c.mensaje_error(
+                    "No se pudo calcular la reposicion de inventario.",
+                    detalle=str(ex) if str(ex) else "Revisa que existan productos de inventario y servicios vendidos.",
+                )
+                inv_pred = None
+            if inv_pred is None or inv_pred.empty:
                 c.vacio("No hay inventario que reposicionar.",
                         icono=":material/inventory_2:",
                         detalle="Carga el dataset de inventario en 'Mis datos' "

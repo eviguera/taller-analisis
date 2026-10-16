@@ -10,7 +10,14 @@ from ui.context import obtener_estado
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de vehículos.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     vehiculos = data.get("vehiculos", pd.DataFrame())
     c.cabecera(
@@ -51,8 +58,15 @@ def principal():
 
     with tab_marcas:
         if tab_marcas.open:
-            por_marca = analyzer.ingresos_por_marca()
-            if not por_marca.empty:
+            try:
+                por_marca = analyzer.ingresos_por_marca()
+            except Exception as ex:
+                c.mensaje_error(
+                    "No se pudo calcular los ingresos por marca.",
+                    detalle=str(ex) if str(ex) else "Revisa que existan facturas con vehículo asociado.",
+                )
+                por_marca = None
+            if por_marca is not None and not por_marca.empty:
                 with c.panel("Ingresos por marca", "Facturacion, facturas y promedio por marca",
                              icono=":material/savings:"):
                     c.mostrar_grafico(c.grafico_barras(
@@ -72,8 +86,15 @@ def principal():
 
     with tab_ingresos:
         if tab_ingresos.open:
-            ing = analyzer.ingresos_por_vehiculo(n=50)
-            if ing.empty:
+            try:
+                ing = analyzer.ingresos_por_vehiculo(n=50)
+            except Exception as ex:
+                c.mensaje_error(
+                    "No se pudo calcular los ingresos por vehículo.",
+                    detalle=str(ex) if str(ex) else "Revisa que existan facturas con vehículo asociado.",
+                )
+                ing = None
+            if ing is None or ing.empty:
                 c.vacio("Sin facturas con vehiculo asociado para calcular ingresos.",
                         icono=":material/savings:",
                         detalle="Se necesitan facturas con vehiculo asociado. "

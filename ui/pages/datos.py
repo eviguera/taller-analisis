@@ -128,7 +128,14 @@ textarea:focus-visible, select:focus-visible, [role="tab"]:focus-visible {{
 
 def principal():
     _css_estructura()
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos de la página Mis datos.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
     c.cabecera(
         "Mis datos",
         "Importa tus datos (CSV, Excel o PSPP), verifica calidad y procesa el ETL",

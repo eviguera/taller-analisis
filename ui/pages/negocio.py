@@ -19,7 +19,14 @@ from ui.context import obtener_estado
 
 
 def principal():
-    cfg, data, analyzer, predictor = obtener_estado()
+    try:
+        cfg, data, analyzer, predictor = obtener_estado()
+    except Exception as e:  # nunca falle silenciosamente
+        c.mensaje_error(
+            "No se pudieron cargar los datos del panorama de negocio.",
+            detalle=str(e) if str(e) else "Revisa que el almacén del workspace esté disponible.",
+        )
+        return
 
     c.cabecera(
         "Panorama de negocio",
@@ -27,7 +34,14 @@ def principal():
         icono=":material/trending_up:",
     )
 
-    salud = salud_cartera(analyzer)
+    try:
+        salud = salud_cartera(analyzer)
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudieron calcular las métricas de cartera.",
+            detalle=str(e) if str(e) else "Revisa que las facturas tengan columnas validas (fecha, total, cliente_id).",
+        )
+        return
     if not salud:
         c.vacio("Aún no hay facturas suficientes para calcular las métricas de negocio.",
                 icono=":material/trending_up:",
@@ -89,8 +103,16 @@ def principal():
     # ------------------------------------------------------------------
     st.header("2 · ROI de la suscripción", icon=":material/donut_large:")
     st.caption("Lo que GIRO protege o recupera frente al costo del plan")
-    eventos = escenarios_proyeccion(analyzer, cfg)
-    roi = roi_suscripcion(analyzer, cfg)
+    try:
+        eventos = escenarios_proyeccion(analyzer, cfg)
+        roi = roi_suscripcion(analyzer, cfg)
+    except Exception as e:
+        eventos = None
+        roi = None
+        c.mensaje_error(
+            "No se pudieron calcular los escenarios de suscripción.",
+            detalle=str(e) if str(e) else "Revisa que existan datos de facturación de al menos dos meses.",
+        )
     if eventos and roi:
         col1, col2 = st.columns(2, vertical_alignment="center")
         with col1:
@@ -140,28 +162,36 @@ def principal():
               icon=":material/account_balance:")
     st.caption("Costo de servicio (COGS) por workspace, margen bruto, "
                "ingreso recurrente (MRR) y punto de equilibrio")
-    ue = unidad_economica(cfg)
-    c.kpi_grid([
-        ("COGS por workspace", c.moneda(ue["costo_tenant"], cfg.moneda), None, None,
-         "Infraestructura por empresa al mes (DuckDB + parquet + código abierto)."),
-        ("Margen bruto", f"{ue['margen_bruto']*100:.0f}%", None, None,
-         "Precio ponderado menos COGS, sobre el precio."),
-        ("Punto de equilibrio", f"~{c.miles(ue['breakeven_clientes'])} clientes Pro",
-         None, None,
-         "Clientes Pro necesarios para cubrir el gasto fijo mensual."),
-    ])
+    try:
+        ue = unidad_economica(cfg)
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudieron calcular la unidad económica de la plataforma.",
+            detalle=str(e) if str(e) else "Revisa la configuración de suscripción en el config del workspace.",
+        )
+        ue = None
+    if ue is not None:
+        c.kpi_grid([
+            ("COGS por workspace", c.moneda(ue["costo_tenant"], cfg.moneda), None, None,
+             "Infraestructura por empresa al mes (DuckDB + parquet + código abierto)."),
+            ("Margen bruto", f"{ue['margen_bruto']*100:.0f}%", None, None,
+             "Precio ponderado menos COGS, sobre el precio."),
+            ("Punto de equilibrio", f"~{c.miles(ue['breakeven_clientes'])} clientes Pro",
+             None, None,
+             "Clientes Pro necesarios para cubrir el gasto fijo mensual."),
+        ])
 
-    st.subheader("Ingreso recurrente mensual (MRR) por tamaño de cartera")
-    st.caption("Composición del mix: Core 40% / Pro 60%")
-    tabla = ue["tabla"].copy()
-    for col in ("MRR bruto", "COGS (infra)", "Gasto fijo", "MRR neto"):
-        tabla[col] = tabla[col].map(lambda v: c.moneda(v, cfg.moneda))
-    tabla["Margen bruto"] = tabla["Margen bruto"].map(lambda v: f"{v*100:.0f}%")
-    c.dataframe(tabla, alto=220, column_config={
-        "Clientes": st.column_config.NumberColumn("Clientes"),
-    })
-    st.caption(f":material/tune: Parámetros editables en el config `suscripcion:` "
-               f"(planes, costo_tenant, gasto_fijo, tasa_recuperacion_riesgo).")
+        st.subheader("Ingreso recurrente mensual (MRR) por tamaño de cartera")
+        st.caption("Composición del mix: Core 40% / Pro 60%")
+        tabla = ue["tabla"].copy()
+        for col in ("MRR bruto", "COGS (infra)", "Gasto fijo", "MRR neto"):
+            tabla[col] = tabla[col].map(lambda v: c.moneda(v, cfg.moneda))
+        tabla["Margen bruto"] = tabla["Margen bruto"].map(lambda v: f"{v*100:.0f}%")
+        c.dataframe(tabla, alto=220, column_config={
+            "Clientes": st.column_config.NumberColumn("Clientes"),
+        })
+        st.caption(f":material/tune: Parámetros editables en el config `suscripcion:` "
+                   f"(planes, costo_tenant, gasto_fijo, tasa_recuperacion_riesgo).")
 
     # Detalle de planes configurados
     planes = planes_activos(cfg)
