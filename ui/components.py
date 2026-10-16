@@ -141,25 +141,25 @@ def kpi_grid(items):
             with st.container(border=True):
                 if es_primario:
                     st.markdown(
-                        f"<div style='color:{PALETA['texto_suave']};font-size:0.8rem;"
+                        f"<div style='color:{PALETA['texto_suave']};font-size:0.85rem;"
                         f"text-transform:uppercase;letter-spacing:0.08em;'>{etiqueta}</div>"
                         f"<div style='color:{PALETA['primario']};font-size:2.1rem;"
                         f"font-weight:700;'>{valor}</div>"
                         f"{f'<div style=\"color:{PALETA['primario_suave']};font-size:0.8rem;\" '
                         f'>{delta}</div>' if delta else ''}"
-                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.75rem;\" '
+                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.8rem;\" '
                         f'>{ayuda}</div>' if ayuda else ''}",
                         unsafe_allow_html=True,
                     )
                 else:
                     st.markdown(
-                        f"<div style='color:{PALETA['texto_suave']};font-size:0.7rem;"
+                        f"<div style='color:{PALETA['texto_suave']};font-size:0.85rem;"
                         f"text-transform:uppercase;letter-spacing:0.05em;'>{etiqueta}</div>"
                         f"<div style='color:{PALETA['primario_suave']};font-size:1.4rem;"
                         f"font-weight:600;'>{valor}</div>"
-                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.7rem;\" '
+                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.8rem;\" '
                         f'>{delta}</div>' if delta else ''}"
-                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.68rem;\" '
+                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.8rem;\" '
                         f'>{ayuda}</div>' if ayuda else ''}",
                         unsafe_allow_html=True,
                     )
