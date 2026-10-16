@@ -8,17 +8,11 @@ from . import (resumen, negocio, acciones, alertas, clientes, servicios, vehicul
 
 PAGINAS = [
     ("Resumen general", "resumen", ":material/dashboard:", resumen.principal, True),
-    ("Mi negocio", "negocio", ":material/trending_up:", negocio.principal, False),
-    ("Reportes", "reportes", ":material/description:", reportes.principal, False),
+    ("Predicciones", "predicciones", ":material/auto_graph:", predicciones.principal, False),
     ("Acciones", "acciones", ":material/task_alt:", acciones.principal, False),
     ("Alertas", "alertas", ":material/notifications_active:", alertas.principal, False),
-    ("Clientes", "clientes", ":material/groups:", clientes.principal, False),
-    ("Servicios", "servicios", ":material/build:", servicios.principal, False),
-    ("Vehiculos", "vehiculos", ":material/directions_car:", vehiculos.principal, False),
-    ("Inventario", "inventario", ":material/inventory_2:", inventario.principal, False),
-    ("Predicciones", "predicciones", ":material/auto_graph:", predicciones.principal, False),
-    ("Simulador", "simulador", ":material/science:", simulador.principal, False),
     ("Mis datos", "datos", ":material/database:", datos.principal, False),
+    ("Reportes", "reportes", ":material/description:", reportes.principal, False),
 ]
 
 __all__ = ["PAGINAS"]
