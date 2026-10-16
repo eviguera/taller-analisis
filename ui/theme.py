@@ -61,20 +61,19 @@ def css(tema: dict) -> str:
     """
 
 
-def _css_premium(oscuridad: bool) -> str:
+def _css_premium(tema: dict, oscuridad: bool) -> str:
     """Overlay CSS minimalista.
 
     Sustituye las sombras genericas y los radios uniformes por bordes
     tenues y jerarquía tipográfica. Color solo para significado.
     """
+    t = tema_config(tema)
+    primario = t["color_primario"]
+
     if oscuridad:
-        fondo_tarjeta = "#0B1120"
         borde_tarjeta = "#1F2A44"
-        texto_suave = "#94A3B8"
     else:
-        fondo_tarjeta = "#FFFFFF"
         borde_tarjeta = "#E2E8F0"
-        texto_suave = "#64748B"
 
     return f"""
     <style>
@@ -168,5 +167,5 @@ def aplicar(tema: dict) -> None:
         oscuro = st.context.theme.type == "dark"
     except Exception:
         oscuro = False
-    st.markdown(css(tema) + _css_premium(oscuro) + _css_accesibilidad(oscuro),
+    st.markdown(css(tema) + _css_premium(tema, oscuro) + _css_accesibilidad(oscuro),
                unsafe_allow_html=True)
