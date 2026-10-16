@@ -9,7 +9,9 @@ import streamlit as st
 from src import aplicacion
 from src.aplicacion import (CUOTA_WORKSPACE_BYTES, EJEMPLOS_SQL,
                              LIMITE_SUBIDA_BYTES, publicar_warehouse,
-                             ver_warehouse)
+                             ver_warehouse, conectores_desde_snapshot,
+                             crear_snapshot_erp, escribir_conectores,
+                             sincronizar_conectores)
 from src.core import auth
 from src.core.catalog import escanear_directorio, vincular_archivos_a_datasets
 from src.core.conector_sql import mensaje_error
@@ -41,8 +43,8 @@ def _mostrar_calidad(calidad) -> None:
     st.warning(
         f":material/rule: Calidad de datos: **{res['revisar'] + res['error']}** de "
         f"**{res['total']}** reglas no se cumplen.")
-    st.dataframe(
-        fallas, width="stretch", hide_index=True,
+    c.dataframe(
+        fallas, alto=None,
         column_config={
             "evaluadas": st.column_config.NumberColumn("Evaluadas"),
             "cumplen": st.column_config.NumberColumn("Cumplen"),
@@ -225,7 +227,7 @@ def principal():
                         "Confianza": (fila["confianza"] if fila["confianza"] is None
                                       else f"{fila['confianza']:.0%}"),
                     })
-                st.dataframe(pd.DataFrame(filas), width="stretch", height=250, column_config={
+                c.dataframe(pd.DataFrame(filas), alto=250, column_config={
                     "Tamano (KB)": st.column_config.NumberColumn("Tamano (KB)"),
                 })
             else:
@@ -240,7 +242,7 @@ def principal():
             asignaciones = vincular_archivos_a_datasets(archivos, cfg)
             if asignaciones:
                 mapa = [{"Dataset": d, "Archivo": p.name} for d, p in asignaciones.items()]
-                st.dataframe(pd.DataFrame(mapa), width="stretch")
+                c.dataframe(pd.DataFrame(mapa))
             else:
                 st.warning("No se pudo asociar archivos a los datasets canonicos. "
                            "Revisa el mapeo de columnas.")
@@ -356,7 +358,7 @@ def principal():
                         if not catalogo.empty:
                             esquema_total = catalogo.groupby(["esquema", "tipo"]).size().reset_index(
                                 name="objetos")
-                            st.dataframe(esquema_total, width="stretch")
+                            c.dataframe(esquema_total)
                         else:
                             c.vacio(
                                 "Aún no hay objetos en el almacén.",
@@ -366,7 +368,7 @@ def principal():
                 with col2:
                     with c.panel("Objetos por esquema", "Estructura detallada",
                                  icono=":material/schema:"):
-                        st.dataframe(catalogo, width="stretch", height=260)
+                        c.dataframe(catalogo, alto=260)
 
                 vistas = catalogo[catalogo["tipo"] == "VIEW"]["objeto"].tolist() if not catalogo.empty else []
                 if vistas:
@@ -377,7 +379,7 @@ def principal():
                     if vista != "-- selecciona --":
                         with c.panel(f"Vista: {vista}", "Resultado del modelo dimensional",
                                      icono=":material/table_view:"):
-                            st.dataframe(consultar_vista(vista), width="stretch", height=320)
+                            c.dataframe(consultar_vista(vista), alto=320)
             except Exception as e:  # noqa: BLE001
                 c.vacio(
                     "Aún no hay almacén analítico.",
@@ -412,14 +414,14 @@ def principal():
                         )
                         if resumen["nulos"]:
                             st.markdown("**Columnas con nulos:**")
-                            st.dataframe(pd.DataFrame(list(resumen["nulos"].items()),
-                                                      columns=["Columna", "Nulos"]), width="stretch")
+                            c.dataframe(pd.DataFrame(list(resumen["nulos"].items()),
+                                                      columns=["Columna", "Nulos"]))
                         if resumen["tipos"]:
                             st.markdown("**Tipos de columna:**")
-                            st.dataframe(pd.DataFrame(list(resumen["tipos"].items()),
-                                                      columns=["Columna", "Tipo"]), width="stretch")
+                            c.dataframe(pd.DataFrame(list(resumen["tipos"].items()),
+                                                      columns=["Columna", "Tipo"]))
                         st.markdown("**Vista previa**")
-                        st.dataframe(df.head(10), width="stretch")
+                        c.dataframe(df.head(10))
             else:
                 c.vacio(
                     "Aún no hay datos que revisar.",
@@ -487,14 +489,14 @@ de la pestana *Procesar (ETL)*.
                     st.caption(f"Columnas: `{', '.join(str(x) for x in datos.columns)}`")
                     col_pre, col_meta = st.columns([2, 1], vertical_alignment="center")
                     with col_pre:
-                        st.dataframe(datos.head(3), width="stretch")
+                        c.dataframe(datos.head(3))
                     with col_meta:
                         if etiquetas:
                             filas_label = []
                             for var, mapa in etiquetas.items():
                                 m = "; ".join(f"{k}={v}" for k, v in list(mapa.items())[:4])
                                 filas_label.append({"Variable": var, "Etiquetas": m})
-                            st.dataframe(pd.DataFrame(filas_label), width="stretch", height=120)
+                            c.dataframe(pd.DataFrame(filas_label), alto=120)
             else:
                 c.vacio(
                     "No hay archivos .sav, .zsav o .por en el directorio de datos.",
@@ -508,11 +510,6 @@ de la pestana *Procesar (ETL)*.
     # ---------------------------------------------------------------
     with _pestana(tab_conectores):
         if tab_conectores is not None and tab_conectores.open:
-            from src.core.conector_sql import (conectores_desde_snapshot,
-                                               crear_snapshot_erp,
-                                               escribir_conectores,
-                                               sincronizar_conectores)
-
             st.markdown("**Sincronizacion con origenes externos (ERP/SQL)**")
             st.caption("GIRO puede poblar sus datasets desde otros motores: "
                        "SQLite, DuckDB, CSV/Excel (archivo o URL). Los conectores "
@@ -524,7 +521,7 @@ de la pestana *Procesar (ETL)*.
                 "Fuente presente": "OK" if fila["existe"] else "NO",
             } for fila in aplicacion.filas_conectores(cfg)]
             if filas:
-                st.dataframe(pd.DataFrame(filas), width="stretch")
+                c.dataframe(pd.DataFrame(filas))
 
                 if st.button("Sincronizar conectores ahora", type="primary",
                              icon=":material/sync:"):
@@ -565,10 +562,9 @@ de la pestana *Procesar (ETL)*.
                                f"({len(conteos)} datasets, "
                                f"{c.miles(sum(conteos.values()))} filas)")
                     if conteos:
-                        st.dataframe(
+                        c.dataframe(
                             pd.DataFrame({"Dataset": list(conteos),
-                                          "Filas": list(conteos.values())}),
-                            width="stretch")
+                                          "Filas": list(conteos.values())}))
             with col_con:
                 if st.button("2. Conectar datasets del snapshot", type="secondary",
                              icon=":material/link:",
@@ -651,7 +647,7 @@ de la pestana *Procesar (ETL)*.
                             publicados = publicar_warehouse(cfg, wh_dsn.strip())
                             wh_estado.update(label=f"{len(publicados)} objetos publicados",
                                              state="complete", expanded=False)
-                            st.dataframe(pd.DataFrame(publicados), width="stretch")
+                            c.dataframe(pd.DataFrame(publicados))
                         except Exception as e:  # noqa: BLE001
                             wh_estado.update(label="Fallo la publicacion", state="error")
                             # mensaje_error enmascara el DSN: una excepcion de
@@ -666,7 +662,7 @@ de la pestana *Procesar (ETL)*.
                         if df_wh.empty:
                             st.info("No hay tablas GIRO en el warehouse destino.")
                         else:
-                            st.dataframe(df_wh, width="stretch")
+                            c.dataframe(df_wh)
                     except Exception as e:  # noqa: BLE001
                         st.error(f"No se pudo ver las tablas: {mensaje_error(e)}")
 
@@ -700,7 +696,7 @@ de la pestana *Procesar (ETL)*.
                 try:
                     with st.spinner("Ejecutando consulta…"):
                         df_res = consulta_sql(consulta)
-                    st.dataframe(df_res, width="stretch", height=300)
+                    c.dataframe(df_res, alto=300)
                     st.caption(f"{c.miles(len(df_res))} filas · "
                                f"{c.miles(len(df_res.columns))} columnas")
                 except Exception as e:  # noqa: BLE001

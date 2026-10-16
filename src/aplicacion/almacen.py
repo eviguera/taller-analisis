@@ -14,13 +14,16 @@ datos ya cargados y opera sobre `PuertoAlmacen`, sin conocer el motor.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from ..core import conector_sql
 from ..puertos import PuertoAlmacen
 from .carga import derivados_almacen
+
+if TYPE_CHECKING:
+    from ..core.config import AppConfig
 
 #: Vistas que salen en la exportacion analitica a PSPP/SPSS.
 VISTAS_PARA_EXPORTAR = [
@@ -53,7 +56,7 @@ EJEMPLOS_SQL = {
 #  Firmas: deciden si hay que volver a escribir en el almacen
 # ------------------------------------------------------------------
 
-def firma_fuentes(cfg) -> str:
+def firma_fuentes(cfg: "AppConfig") -> str:
     """Firma barata de los originales del workspace: mtimes/tamaños y mapeo.
 
     No recorre los valores (eso costaria como la carga misma): basta con que
@@ -90,7 +93,7 @@ def firma_fuentes(cfg) -> str:
     return "|".join(partes)
 
 
-def firma_datos(cfg, data) -> str:
+def firma_datos(cfg: "AppConfig", data: dict[str, pd.DataFrame]) -> str:
     """Firma de los datos ya cargados: fuentes + forma de cada dataset."""
     import hashlib
 
@@ -102,7 +105,8 @@ def firma_datos(cfg, data) -> str:
     return hashlib.sha1("|".join(partes).encode("utf-8")).hexdigest()
 
 
-def sincronizar_almacen(store: PuertoAlmacen, cfg, data,
+def sincronizar_almacen(store: PuertoAlmacen, cfg: "AppConfig",
+                        data: dict[str, pd.DataFrame],
                         materializar: bool = False) -> bool:
     """Registra los datos en el almacen solo si cambiaron desde la ultima carga.
 
@@ -144,7 +148,7 @@ def validar_sql_solo_lectura(sql: str) -> None:
 #  Casos de uso
 # ------------------------------------------------------------------
 
-def abrir_almacen(cfg) -> PuertoAlmacen:
+def abrir_almacen(cfg: "AppConfig") -> PuertoAlmacen:
     """Almacen del workspace, listo para usar. El llamador lo cierra.
 
     El import del adaptador es **perezoso y unico**: mientras nadie abra un
@@ -157,7 +161,8 @@ def abrir_almacen(cfg) -> PuertoAlmacen:
     return get_store(cfg)
 
 
-def consulta_sql(cfg, data, sql: str) -> pd.DataFrame:
+def consulta_sql(cfg: "AppConfig", data: dict[str, pd.DataFrame],
+                 sql: str) -> pd.DataFrame:
     """Sincroniza el almacen y ejecuta una consulta de solo lectura.
 
     Solo admin: el permiso lo impone el llamador (la UI lo hace en
@@ -174,7 +179,7 @@ def consulta_sql(cfg, data, sql: str) -> pd.DataFrame:
         store.cerrar()
 
 
-def estructura(cfg, data) -> pd.DataFrame:
+def estructura(cfg: "AppConfig", data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Sincroniza, materializa core/analitica y devuelve el catalogo."""
     store = abrir_almacen(cfg)
     try:
@@ -184,7 +189,8 @@ def estructura(cfg, data) -> pd.DataFrame:
         store.cerrar()
 
 
-def vista(cfg, data, nombre: str) -> pd.DataFrame:
+def vista(cfg: "AppConfig", data: dict[str, pd.DataFrame],
+          nombre: str) -> pd.DataFrame:
     """Consulta una vista del esquema analitica (p. ej. 'ingresos_mensuales')."""
     store = abrir_almacen(cfg)
     try:
@@ -194,7 +200,9 @@ def vista(cfg, data, nombre: str) -> pd.DataFrame:
         store.cerrar()
 
 
-def exportar_analitica_pspp(cfg, data, destino) -> Tuple[List[str], Dict[str, str]]:
+def exportar_analitica_pspp(cfg: "AppConfig",
+                            data: dict[str, pd.DataFrame],
+                            destino: Path | str) -> Tuple[List[str], Dict[str, str]]:
     """Exporta los datasets cargados y las vistas analiticas clave a .sav.
 
     Devuelve ``(exportados, errores)``. Util para llevar la analitica
@@ -235,14 +243,14 @@ def exportar_analitica_pspp(cfg, data, destino) -> Tuple[List[str], Dict[str, st
         store.cerrar()
 
 
-def resumen_calidad(data) -> dict:
+def resumen_calidad(data: dict[str, pd.DataFrame]) -> dict:
     """Resumen de calidad de los datasets cargados."""
     from ..data_loader import get_data_summary
 
     return get_data_summary(data)
 
 
-def resumen_reglas(calidad) -> Tuple[dict, pd.DataFrame]:
+def resumen_reglas(calidad: pd.DataFrame) -> Tuple[dict, pd.DataFrame]:
     """Conteo de reglas por estado y subconjunto que no las cumple.
 
     Devuelve ``(resumen, fallas)``: la UI pinta el resumen y la tabla de

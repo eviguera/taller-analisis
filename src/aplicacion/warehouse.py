@@ -15,15 +15,19 @@ siendo cosa del llamador, que es el unico que sabe donde se lo enseña.
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from ..core.config import AppConfig
 
 #: Esquemas del almacen que se publican, en el orden en que se publican.
 ESQUEMAS_WAREHOUSE = ("datasets", "core", "analitica")
 
 
-def publicar_warehouse(cfg, dsn: str, esquemas=ESQUEMAS_WAREHOUSE,
+def publicar_warehouse(cfg: "AppConfig", dsn: str,
+                       esquemas: tuple[str, ...] = ESQUEMAS_WAREHOUSE,
                        prefijo: str = "giro_") -> List[Dict]:
     """Publica el almacen del workspace hacia un warehouse SQL.
 
@@ -41,7 +45,8 @@ def publicar_warehouse(cfg, dsn: str, esquemas=ESQUEMAS_WAREHOUSE,
     return sincronizar(cfg, dsn, esquemas=tuple(esquemas), prefijo=prefijo)
 
 
-def ver_warehouse(cfg, dsn: str, prefijo: str = "giro_") -> pd.DataFrame:
+def ver_warehouse(cfg: "AppConfig", dsn: str,
+                  prefijo: str = "giro_") -> pd.DataFrame:
     """Lista los objetos GIRO ya publicados en el warehouse destino.
 
     El filtro por prefijo incluye la clave del workspace: cada tenant

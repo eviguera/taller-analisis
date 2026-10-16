@@ -39,6 +39,13 @@ from .carga import (
     leer_archivos_pspp,
     mismo_contenido,
 )
+from .conectores import (
+    conectores_desde_snapshot,
+    crear_snapshot_erp,
+    escribir_conectores,
+    parsear_conectores,
+    sincronizar_conectores,
+)
 from .warehouse import (
     ESQUEMAS_WAREHOUSE,
     publicar_warehouse,
@@ -71,6 +78,11 @@ __all__ = [
     "guardar_subidas",
     "leer_archivos_pspp",
     "mismo_contenido",
+    "conectores_desde_snapshot",
+    "crear_snapshot_erp",
+    "escribir_conectores",
+    "parsear_conectores",
+    "sincronizar_conectores",
     "ESQUEMAS_WAREHOUSE",
     "publicar_warehouse",
     "ver_warehouse",

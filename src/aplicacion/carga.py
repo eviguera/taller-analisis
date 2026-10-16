@@ -15,11 +15,14 @@ un fichero que deje el CLI.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from ..core import catalog
+
+if TYPE_CHECKING:
+    from ..core.config import AppConfig
 
 #: Cuota por archivo en la subida: corta un fichero gigante. Va de la mano
 #: con server.maxUploadSize (200 MB por defecto), asi que por si sola no
@@ -34,7 +37,7 @@ CUOTA_WORKSPACE_BYTES = 1024 * 1024 * 1024
 FORMATOS_PSPP = ("sav", "zsav", "por")
 
 
-def derivados_almacen(cfg) -> set:
+def derivados_almacen(cfg: "AppConfig") -> set:
     """Nombres de los ficheros derivados del almacen: no se suben ni cuentan.
 
     El almacen DuckDB, su WAL y su temporal son derivados, no subidos:
@@ -47,7 +50,7 @@ def derivados_almacen(cfg) -> set:
     return {db, f"{db}.wal", f"{db}.tmp"}
 
 
-def mismo_contenido(ruta: Path, contenido) -> bool:
+def mismo_contenido(ruta: Path, contenido: bytes | memoryview) -> bool:
     """True si el fichero en disco ya es byte a byte el contenido subido.
 
     Se compara por bloques: cargar un fichero de 200 MB entero en RAM solo
@@ -61,9 +64,13 @@ def mismo_contenido(ruta: Path, contenido) -> bool:
         return f.read(1) == b""
 
 
-def guardar_subidas(subidas, destino_dir, excluidos=frozenset(),
-                    limite_bytes: int = LIMITE_SUBIDA_BYTES,
-                    cuota_bytes: int = CUOTA_WORKSPACE_BYTES):
+def guardar_subidas(
+    subidas: list[tuple[str, int, bytes | memoryview]],
+    destino_dir: Path | str,
+    excluidos: frozenset[str] = frozenset(),
+    limite_bytes: int = LIMITE_SUBIDA_BYTES,
+    cuota_bytes: int = CUOTA_WORKSPACE_BYTES,
+) -> tuple[int, int, int, int]:
     """Guarda las subidas en el workspace, solo si su contenido cambio.
 
     ``subidas`` es una secuencia de ``(nombre, tamano, contenido)`` donde
@@ -110,7 +117,7 @@ def guardar_subidas(subidas, destino_dir, excluidos=frozenset(),
     return guardados, sin_cambios, por_archivo, por_cuota
 
 
-def directorio_datos_permitido(cfg, ruta) -> bool:
+def directorio_datos_permitido(cfg: "AppConfig", ruta: Path | str) -> bool:
     """True si ``ruta`` (resuelta) cae dentro del directorio de datos.
 
     La interfaz deja escribir cualquier texto en el cuadro del directorio;
@@ -122,7 +129,7 @@ def directorio_datos_permitido(cfg, ruta) -> bool:
     return Path(ruta).resolve().is_relative_to(base)
 
 
-def filas_detectadas(archivos) -> List[Dict]:
+def filas_detectadas(archivos: list[catalog.ArchivoDetectado]) -> list[dict]:
     """Filas de la tabla de archivos detectados, clasificadas por dataset.
 
     Devuelve valores crudos (formato sin etiquetar, confianza como tanto
@@ -144,7 +151,7 @@ def filas_detectadas(archivos) -> List[Dict]:
     return filas
 
 
-def filas_conectores(cfg) -> List[Dict]:
+def filas_conectores(cfg: "AppConfig") -> list[dict]:
     """Filas de la tabla de conectores: que fuente tiene cada uno y si existe.
 
     Para una fuente remota (URL o DSN) no hay nada que comprobar en
@@ -170,8 +177,11 @@ def filas_conectores(cfg) -> List[Dict]:
     return filas
 
 
-def exportar_datasets_sav(data, destino,
-                         etiquetas: Optional[Dict[str, dict]] = None) -> Tuple[List[str], Dict[str, str]]:
+def exportar_datasets_sav(
+    data: dict[str, pd.DataFrame],
+    destino: Path | str,
+    etiquetas: Optional[dict[str, dict]] = None,
+) -> Tuple[List[str], Dict[str, str]]:
     """Exporta cada dataset cargado a ``destino/nombre.sav``.
 
     Devuelve ``(exportados, fallos)``: los datasets vacios se saltan y un
@@ -201,7 +211,7 @@ def exportar_datasets_sav(data, destino,
     return exportados, fallos
 
 
-def leer_archivos_pspp(directorio) -> List[Dict]:
+def leer_archivos_pspp(directorio: Path | str) -> list[dict]:
     """Lee los ``.sav``/``.zsav``/``.por`` de un directorio y resume cada uno.
 
     Devuelve una entrada por fichero con ``nombre``, ``formato``,
@@ -235,7 +245,7 @@ def leer_archivos_pspp(directorio) -> List[Dict]:
     return resumenes
 
 
-def ejecutar_etl(cfg):
+def ejecutar_etl(cfg: "AppConfig"):
     """Ejecuta el pipeline ETL del workspace y devuelve su resultado.
 
     Caso de uso compartido por los adaptadores de entrada (UI, API, CLI):

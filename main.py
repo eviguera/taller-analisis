@@ -271,9 +271,9 @@ def _exportar_archivo(df, ruta_base: Path, formato: str):
 
 
 def cmd_conector(args):
-    from src.core.conector_sql import (conectores_desde_snapshot, crear_snapshot_erp,
-                                       escribir_conectores, parsear_conectores,
-                                       sincronizar_conectores)
+    from src.aplicacion import (conectores_desde_snapshot, crear_snapshot_erp,
+                                escribir_conectores, parsear_conectores,
+                                sincronizar_conectores)
     cfg = _config(args)
 
     if args.accion == "listar":

@@ -9,18 +9,20 @@ re-entrena cuando cambia el volumen de datos o se pide explicitamente.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 from .puertos import PuertoRegistroModelos
 
+log = logging.getLogger("taller.registry")
+
 
 class ModelRegistry(PuertoRegistroModelos):
     """Guardado/carga de modelos por tipo (churn, ingresos, demanda, ...)."""
 
-
-    def __init__(self, directorio: Optional[Path] = None):
+    def __init__(self, directorio: Optional[Path] = None) -> None:
         self.directorio = Path(directorio) if directorio else Path("data/models")
         self.directorio.mkdir(parents=True, exist_ok=True)
 
@@ -49,40 +51,52 @@ class ModelRegistry(PuertoRegistroModelos):
     def cargar(self, tipo: str) -> tuple[Any, Optional[dict]]:
         """Devuelve ``(modelo, metadatos)`` o ``(None, None)`` si no existe.
 
-        Un ``joblib`` es deserializacion arbitraria: el archivo debe vivir
-        dentro del directorio del registry (no se aceptan rutas externas) y
-        cualquier fallo se registra en vez de tragarse, para que un modelo
-        corrupto no parezca un "reentrena solo" fantasma.
+        Un ``joblib`` es deserializacion arbitraria (RCE potencial): el archivo
+        debe vivir dentro del directorio del registry y tener extension
+        ``.joblib`` esperada. Cualquier fallo se registra en vez de tragarse,
+        para que un modelo corrupto no parezca un "reentrena solo" fantasma.
         """
-        import logging
-
         import joblib
 
-        modelo_path = self._ruta_modelo(tipo).resolve()
+        import sklearn
+
+        modelo_path = self._ruta_modelo(tipo)
         meta_path = self._ruta_meta(tipo)
-        log = logging.getLogger("taller.registry")
+
         if not modelo_path.exists():
             return None, None
-        if self.directorio.resolve() not in modelo_path.parents:
-            log.warning("Modelo %s fuera del registry; se ignora", modelo_path)
+
+        # Validacion de origen (regla 5 de AGENTS.md):
+        # 1. El path resuelto debe estar dentro del directorio del registry.
+        # 2. La extension debe ser exactamente .joblib (evita archivos
+        #    forjados con otro nombre dentro del directorio).
+        modelo_path_resuelto = modelo_path.resolve()
+        if self.directorio.resolve() not in modelo_path_resuelto.parents:
+            log.warning("Modelo %s fuera del registry; se ignora", modelo_path_resuelto)
             return None, None
-        meta = None
+        if modelo_path_resuelto.suffix != ".joblib":
+            log.warning("Modelo %s con extension no valida; se ignora",
+                        modelo_path_resuelto)
+            return None, None
+
+        meta: Optional[dict] = None
         if meta_path.exists():
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
                 log.warning("Metadatos ilegibles para %s: %s", tipo, e)
+
         version_sklearn = (meta or {}).get("sklearn_version")
         if version_sklearn:
-            import sklearn
-            if version_sklearn != sklearn.__version__:
+            if str(version_sklearn) != sklearn.__version__:
                 # sklearn no garantiza compatibilidad entre versiones al
                 # deserializar; se descarta y se reentrena.
                 log.warning("Modelo %s entrenado con sklearn %s (actual %s); "
                             "se reentrenara", tipo, version_sklearn, sklearn.__version__)
                 return None, None
+
         try:
-            modelo = joblib.load(modelo_path)
+            modelo = joblib.load(modelo_path_resuelto)
         except Exception as e:  # noqa: BLE001
             log.warning("No se pudo cargar el modelo %s (%s): %s; se reentrenara",
                         tipo, modelo_path.name, type(e).__name__)
@@ -95,9 +109,9 @@ class ModelRegistry(PuertoRegistroModelos):
             if r.exists():
                 r.unlink()
 
-    def listar(self) -> list[dict]:
+    def listar(self) -> list[dict[str, Any]]:
         """Catalogo de modelos persistidos con sus metadatos."""
-        modelos = []
+        modelos: list[dict[str, Any]] = []
         for meta_path in sorted(self.directorio.glob("*.json")):
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))

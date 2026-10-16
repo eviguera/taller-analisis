@@ -23,7 +23,7 @@ Este archivo se carga siempre. Los agentes especializados viven en `.opencode/ag
 
 **Arquitectura hexagonal.** Las entradas (UI, API, CLI) llaman a `src/aplicacion`, que habla con `src/puertos`; las implementaciones concretas viven en `src/storage`. **El almacen se obtiene siempre con `get_store()` (`src/data_loader.py`) — es el único punto de decisión de motor** (DuckDB por defecto, Postgres con `GIRO_ALMACEN_MOTOR=postgres`, una base por workspace). Construir un `DataStore` a mano fuera de ese punto es un bug: el ETL, la UI y la API escribirían en sitios distintos.
 
-Datos de ejemplo: taller mecánico (50 clientes, 88 vehículos, 40 servicios, 350 facturas, 24 productos). **El esquema es transversal** — el producto se vende a cualquier negocio. No hardcodees "taller", "vehículo" ni "kilometraje" en lógica de negocio.
+Datos de ejemplo: taller mecánico (50 clientes, 88 vehículos, 40 servicios, 350 facturas, 24 productos). Genera con `generate_data.py`. **El esquema es transversal** — el producto se vende a cualquier negocio. No hardcodees "taller", "vehículo" ni "kilometraje" en lógica de negocio.
 
 ## Cómo trabajar aquí
 
@@ -47,6 +47,14 @@ uvicorn --factory src.api.app:crear_app --port 8503   # API
 .venv/bin/python -m unittest discover -s tests        # suite (con Postgres: GIRO_PG_PASSWORD=... GIRO_PG_HOST=... GIRO_PG_PORT=...)
 docker compose up -d --build
 ```
+
+**Variables de entorno que un agente suele olvidar:**
+- `GIRO_WORKSPACE` — selecciona el workspace activo (`principal` lee la config raiz; no puede recrearse). Ej: `GIRO_WORKSPACE=taller-don-juan python main.py resumen`
+- `GIRO_AUTH_SECRET` — firma de la cookie de sesión. **Obligatorio en producción** (contenedor en `0.0.0.0` exige autenticación). Para desactivar en local: `GIRO_AUTH=0` y servidor en `127.0.0.1`.
+- `GIRO_PG_HOST` / `GIRO_PG_PORT` / `GIRO_PG_USER` / `GIRO_PG_PASSWORD` / `GIRO_PG_DBNAME` / `GIRO_PG_DBPREFIX` — solo para Postgres.
+- `config/usuarios.yaml` — registro de usuarios (permisos `0600`, fuera de git). Crea el primer admin con `python main.py usuarios crear ana --admin`.
+
+**Dependencias:** el `Dockerfile` instala desde `requirements.lock`, no de `requirements.txt`. Si regeneras el lock, hazlo con `python:3.11-slim` (el venv local puede ser más nuevo y elegir versiones incompatibles con 3.11).
 
 ## Reglas inviolables
 
