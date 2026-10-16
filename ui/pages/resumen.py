@@ -1,4 +1,8 @@
-"""Pagina: Resumen general (KPIs + tendencias)."""
+"""Pagina: Resumen general (KPIs principales + tendencia principal).
+
+Version minimalista: solo lo esencial esta visible. Los detalles secundarios
+viven dentro de "Ver mas detalles" para no abrumar al usuario al entrar.
+"""
 
 from datetime import timedelta
 
@@ -76,7 +80,7 @@ def principal():
     with col_titulo:
         c.cabecera(
             "Resumen general",
-            f"{cfg.negocio_nombre} · Panorama de ingresos, clientes y facturación",
+            f"{cfg.negocio_nombre} · Panorama de ingresos y facturación",
             icono=":material/dashboard:",
         )
     with col_filtros:
@@ -93,117 +97,104 @@ def principal():
         )
         return
 
-    try:
-        st.caption(f":material/calendar_month: Periodo **{f1} → {f2}** · "
-                   f"{c.miles(len(filtrado))} facturas consideradas")
+    # ---- KPIs esenciales (solo tres, mas aire) ----
+    total_ingresos = filtrado["total"].sum()
+    total_facturas = len(filtrado)
+    ticket = filtrado["total"].mean()
 
-        # ----- KPIs del periodo filtrado -----
-        total_ingresos = filtrado["total"].sum()
-        total_facturas = len(filtrado)
-        ticket = filtrado["total"].mean()
-        n_clientes = _nunique(filtrado, "cliente_id")
-        n_vehiculos = _nunique(filtrado, "vehiculo_id")
+    n_dias = (f2 - f1).days + 1
+    prev_ini = (pd.Timestamp(f1) - timedelta(days=n_dias)).date()
+    prev_fin = (pd.Timestamp(f1) - timedelta(days=1)).date()
+    monto_prev = df[(df["fecha"].dt.date >= prev_ini) & (df["fecha"].dt.date <= prev_fin)]["total"].sum()
+    delta_ing = f"{100 * (total_ingresos - monto_prev) / monto_prev:+.0f}%" if monto_prev > 0 else None
 
-        # Tendencia mensual (contexto global para los sparklines)
-        mensual = df.groupby("anio_mes").agg(
-            ingresos=("total", "sum"),
-            facturas=("id", "count"),
-            ticket=("total", "mean"),
-        ).tail(8)
+    st.caption(
+        f":material/calendar_month: Periodo **{f1} → {f2}** · "
+        f"{c.miles(total_facturas)} facturas consideradas"
+    )
 
-        def tendencia(columna):
-            return mensual[columna].tolist() if not mensual.empty else None
+    c.kpi_grid([
+        ("Ingresos totales", c.moneda(total_ingresos, cfg.moneda), delta_ing,
+         None, "Facturación acumulada en el periodo"),
+        ("Facturas emitidas", c.miles(total_facturas), None, None,
+         "Numero de facturas en el periodo"),
+        ("Ticket promedio", c.moneda(ticket, cfg.moneda), None, None,
+         "Ingreso promedio por factura"),
+    ])
 
-        # Variacion vs periodo equivalente anterior
-        n_dias = (f2 - f1).days + 1
-        prev_ini = (pd.Timestamp(f1) - timedelta(days=n_dias)).date()
-        prev_fin = (pd.Timestamp(f1) - timedelta(days=1)).date()
-        monto_prev = df[(df["fecha"].dt.date >= prev_ini) & (df["fecha"].dt.date <= prev_fin)]["total"].sum()
-        delta_ing = f"{100 * (total_ingresos - monto_prev) / monto_prev:+.0f}%" if monto_prev > 0 else None
-
-        c.kpi_grid([
-            ("Ingresos totales", c.moneda(total_ingresos, cfg.moneda), delta_ing,
-             tendencia("ingresos"), "Ingresos acumulados en el periodo"),
-            ("Facturas", c.miles(total_facturas), None, tendencia("facturas"),
-             "Número de facturas emitidas"),
-            ("Ticket promedio", c.moneda(ticket, cfg.moneda), None, tendencia("ticket"),
-             "Ingreso promedio por factura"),
-            ("Clientes activos", c.miles(n_clientes), None, None,
-             "Clientes distintos en el periodo"),
-        ])
-    except Exception as e:  # un KPI o sparkline roto no tira toda la pagina
-        c.mensaje_error(
-            "No se pudieron calcular los indicadores del periodo.",
-            detalle=str(e) if str(e) else "Revisa que los datos de facturas tengan columnas validas (fecha, total, cliente_id).",
-        )
-        return
-
-    # ----- Graficos (un panel roto no tira toda la pagina) -----
+    # ---- Un solo grafico principal visible ----
     try:
         serie = filtrado.groupby("anio_mes").agg(
             ingresos=("total", "sum"), facturas=("id", "count")).reset_index()
-
-        col1, col2 = st.columns(2, vertical_alignment="center")
-        with col1:
-            with c.panel("Ingresos por mes", "Series mensuales de facturación",
-                         icono=":material/show_chart:"):
-                c.mostrar_grafico(c.grafico_linea(
-                    serie, "anio_mes", "ingresos",
-                    etiquetas={"anio_mes": "Mes", "ingresos": "Ingresos"}),
-                    width="stretch", height="stretch")
-        with col2:
-            with c.panel("Facturas por mes", "Volumen mensual de órdenes",
-                         icono=":material/bar_chart:"):
-                c.mostrar_grafico(c.grafico_barras(
-                    serie, "anio_mes", "facturas", color_cont="Blues",
-                    etiquetas={"anio_mes": "Mes", "facturas": "Facturas"}),
-                    width="stretch", height="stretch")
-
-        est = analyzer.estacionalidad()
-        col1, col2 = st.columns(2, vertical_alignment="center")
-        with col1:
-            with c.panel("Ingresos por marca", "Marcas que más aportan",
-                         icono=":material/directions_car:"):
-                por_marca = filtrado.groupby("marca").agg(
-                    ingresos=("total", "sum")).sort_values("ingresos", ascending=False).reset_index()
-                c.mostrar_grafico(c.grafico_barras(
-                    por_marca, "marca", "ingresos",
-                    etiquetas={"marca": "Marca", "ingresos": "Ingresos"}),
-                    width="stretch", height="stretch")
-        with col2:
-            with c.panel("Estacionalidad por mes", "Patrón anual de ingresos",
-                         icono=":material/calendar_month:"):
-                mes_df = est["por_mes"].copy()
-                mes_df["mes_nombre"] = mes_df["mes"].map(lambda m: c.MESES_ES[int(m) - 1])
-                c.mostrar_grafico(c.grafico_barras(
-                    mes_df, "mes_nombre", "ingresos",
-                    etiquetas={"mes_nombre": "Mes", "ingresos": "Ingresos"}),
-                    width="stretch", height="stretch")
-
-        col1, col2 = st.columns(2, vertical_alignment="center")
-        with col1:
-            with c.panel("Ingresos por día de la semana", "Cuándo se concentra la demanda",
-                         icono=":material/calendar_view_week:"):
-                dia_df = est["por_dia_semana"].copy()
-                dia_df["dia"] = dia_df["dia_semana"].map(c.DIAS_ES).fillna(dia_df["dia_semana"])
-                c.mostrar_grafico(c.grafico_barras(
-                    dia_df, "dia", "ingresos", color_cont="Reds",
-                    etiquetas={"dia": "Día", "ingresos": "Ingresos"}),
-                    width="stretch", height="stretch")
-        with col2:
-            with c.panel("Estado de facturas", "Distribución por estado",
-                         icono=":material/check_circle:"):
-                estado_df = filtrado["estado"].value_counts().reset_index()
-                estado_df.columns = ["Estado", "Cantidad"]
-                c.mostrar_grafico(c.grafico_pastel(estado_df, "Estado", "Cantidad"),
-                                width="stretch", height="stretch")
+        with c.panel("Ingresos por mes", "Tendencia de facturación",
+                     icono=":material/show_chart:"):
+            c.mostrar_grafico(c.grafico_linea(
+                serie, "anio_mes", "ingresos",
+                etiquetas={"anio_mes": "Mes", "ingresos": "Ingresos"}),
+                width="stretch", height="stretch")
     except Exception as e:
         c.mensaje_error(
-            "No se pudieron renderizar algunos graficos.",
-            detalle=str(e) if str(e) else "Revisa que las columnas de fecha, total, marca y estado tengan valores validos.",
+            "No se pudo renderizar el gráfico principal.",
+            detalle=str(e) if str(e) else "Revisa que las columnas de fecha y total tengan valores válidos.",
         )
 
-    # ----- Vista previa de datos crudos -----
+    # ---- Detalles opcionales (colapsables) ----
+    with st.expander("Ver más detalles", icon=":material/expand_more:"):
+        col1, col2 = st.columns(2)
+        with col1:
+            try:
+                n_clientes = _nunique(filtrado, "cliente_id")
+                st.metric("Clientes activos", c.miles(n_clientes))
+            except Exception:
+                pass
+        with col2:
+            try:
+                n_vehiculos = _nunique(filtrado, "vehiculo_id")
+                st.metric("Vehículos atendidos", c.miles(n_vehiculos))
+            except Exception:
+                pass
+
+        try:
+            mensual = df.groupby("anio_mes").agg(
+                ingresos=("total", "sum"),
+                facturas=("id", "count"),
+                ticket=("total", "mean"),
+            ).tail(8)
+
+            def tendencia(columna):
+                return mensual[columna].tolist() if not mensual.empty else None
+
+            c.kpi_grid([
+                ("Facturas", c.miles(total_facturas), None, tendencia("facturas"),
+                 "Numero de facturas emitidas"),
+                ("Ticket promedio", c.moneda(ticket, cfg.moneda), None, tendencia("ticket"),
+                 "Ingreso promedio por factura"),
+            ])
+        except Exception:
+            pass
+
+        try:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                por_marca = filtrado.groupby("marca").agg(
+                    ingresos=("total", "sum")).sort_values("ingresos", ascending=False).reset_index()
+                with c.panel("Ingresos por marca", "Marcas que más aportan",
+                             icono=":material/directions_car:"):
+                    c.mostrar_grafico(c.grafico_barras(
+                        por_marca, "marca", "ingresos",
+                        etiquetas={"marca": "Marca", "ingresos": "Ingresos"}),
+                        width="stretch", height="stretch")
+            with col_b:
+                estado_df = filtrado["estado"].value_counts().reset_index()
+                estado_df.columns = ["Estado", "Cantidad"]
+                with c.panel("Estado de facturas", "Distribución",
+                             icono=":material/check_circle:"):
+                    c.mostrar_grafico(c.grafico_pastel(estado_df, "Estado", "Cantidad"),
+                                    width="stretch", height="stretch")
+        except Exception:
+            pass
+
+    # ---- Vista previa de datos crudos ----
     with st.expander("Ver datos crudos (filtrados)", icon=":material/table_rows:"):
         c.dataframe(filtrado.drop(columns=["detalles"], errors="ignore"),
                     alto=300)
