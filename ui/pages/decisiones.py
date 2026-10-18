@@ -3,18 +3,18 @@
 Entrega al dueño de la pyme los indicadores que necesita para decidir hoy,
 con una recomendación de acción clara en cada uno.
 
+Incluye indicadores predictivos: cuánto se facturará el mes que viene
+(modelo Gradient Boosting) y el escenario 12 meses (simulador what-if).
+
 Diseño minimalista: un número principal, tablas simples, color solo para
 significado (rojo = actuar, ámbar = revisar, verde = todo bien).
-
-Incluye indicadores predictivos: cuánto se facturará el mes que viene
-(modelo de Gradient Boosting) y el escenario 12 meses (simulador what-if).
 """
 import pandas as pd
 import streamlit as st
 
 from ui import components as c
 from ui.context import obtener_estado
-from src.aplicacion import decisiones
+from src.agentes_estrategicos import ejecutar_pipeline_de_decisiones
 
 
 def _color_accion(accion: str) -> str:
@@ -36,7 +36,20 @@ def principal():
         )
         return
 
-    resumen = decisiones.indicadores_decision(data, cfg=cfg)
+    # Ejecutar el pipeline completo de agentes de decisión.
+    try:
+        resultado = ejecutar_pipeline_de_decisiones(data, cfg=cfg)
+    except Exception as e:
+        c.mensaje_error(
+            "No se pudieron calcular las decisiones de negocio.",
+            detalle=str(e) if str(e) else "Revisa que los datos estén completos.",
+        )
+        return
+
+    resumen = resultado.get("resumen_ejecutivo", {})
+    analisis = resultado.get("analisis", {})
+    dossier = resultado.get("dossier", {})
+    validacion = resultado.get("validacion", {})
 
     c.cabecera(
         "Decisiones de tu negocio",
@@ -46,32 +59,32 @@ def principal():
 
     # ---- Resumen ejecutivo ----
     c.kpi_grid([
-        ("Estado general", resumen.resumen_texto[:60] + ("…" if len(resumen.resumen_texto) > 60 else ""),
+        ("Estado general", resumen.get("mensaje_principal", "Sin datos"),
          None, None, "Resumen de lo que requiere tu atención"),
     ])
 
     # ---- Indicadores individuales ----
-    for indicador in resumen.indicadores:
-        color = _color_accion(indicador.accion)
+    for indicador in resumen.get("indicadores", []):
+        color = _color_accion(indicador.get("accion", "info"))
         icono_accion = {
             "actuar": ":material/priority_high:",
             "revisar": ":material/notifications:",
             "ok": ":material/check_circle:",
-        }.get(indicador.accion, ":material/info:")
+        }.get(indicador.get("accion", "info"), ":material/info:")
 
         with c.panel(
-            f"{indicador.nombre}  {c.badge(indicador.accion.upper(), color)}",
-            subtitulo=indicador.detalle,
+            f"{indicador.get('nombre', 'Indicador')}  {c.badge(indicador.get('accion', 'info').upper(), color)}",
+            subtitulo=indicador.get("detalle", ""),
             icono=icono_accion,
         ):
             st.markdown(
-                f"<div style='font-size:2rem;font-weight:700;color:{c.PALETA['primario'] if indicador.accion == 'ok' else c.PALETA['peligro'] if indicador.accion == 'actuar' else c.PALETA['secundario']};'>{indicador.valor}</div>",
+                f"<div style='font-size:2rem;font-weight:700;color:{c.PALETA['primario'] if indicador.get('accion') == 'ok' else c.PALETA['peligro'] if indicador.get('accion') == 'actuar' else c.PALETA['secundario']};'>{indicador.get('valor', '-')}</div>",
                 unsafe_allow_html=True,
             )
 
     # ---- Recomendación de acción ----
-    n_actuar = sum(1 for i in resumen.indicadores if i.accion == "actuar")
-    n_revisar = sum(1 for i in resumen.indicadores if i.accion == "revisar")
+    n_actuar = resumen.get("n_decisiones_actuar", 0)
+    n_revisar = resumen.get("n_decisiones_revisar", 0)
 
     st.divider()
     if n_actuar > 0:
@@ -89,6 +102,149 @@ def principal():
             "Todo va bien.",
             "Sigue monitoreando tus indicadores semanalmente.",
         )
+
+    # ---- Predicción de ingresos (modelo ML) ----
+    st.divider()
+    st.markdown("### 📈 Ingresos esperados (próximo mes)")
+    ingreso_predicho = None
+    for d in dossier.get("decisiones", []):
+        if d.get("area") == "ingresos":
+            with c.panel(
+                f"{d.get('decision', 'Ingresos')}  {c.badge(d.get('confianza', 'info').upper(), 'azul')}",
+                subtitulo=d.get("motivo", ""),
+                icono=":material/trending_up:",
+            ):
+                st.markdown(
+                    f"<div style='font-size:2rem;font-weight:700;color:{c.PALETA['primario']};'>{d.get('impacto_esperado', 0):+,.0f} vs mes anterior</div>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    f"Confianza: {d.get('confianza', 'N/A')} | "
+                    f"Escenarios: conservador ${d.get('escenarios', {}).get('conservador', 0):,.0f} | "
+                    f"base ${d.get('escenarios', {}).get('base', 0):,.0f} | "
+                    f"agresivo ${d.get('escenarios', {}).get('agresivo', 0):,.0f}"
+                )
+            ingreso_predicho = d
+
+    # ---- Escenario 12 meses ----
+    st.divider()
+    st.markdown("### 📊 Escenario a 12 meses")
+    escenario_conservador = dossier.get("escenario_conservador", {})
+    escenario_agresivo = dossier.get("escenario_agresivo", {})
+    delta_ingresos = dossier.get("delta_ingresos", 0)
+    delta_ebitda = dossier.get("delta_ebitda", 0)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(
+            f"<div style='padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;text-align:center;'>"
+            f"<div style='font-size:12px;color:#64748b;text-transform:uppercase;'>Conservador</div>"
+            f"<div style='font-size:24px;font-weight:700;color:#1e293b;'>{escenario_conservador.get('ingresos', 0):,.0f}</div>"
+            f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>Ingresos 12m</div>"
+            f"<div style='font-size:12px;color:#64748b;'>{escenario_conservador.get('ebitda', 0):,.0f} EBITDA</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f"<div style='padding:16px;background:#f0fdf4;border:1px solid #059669;border-radius:12px;text-align:center;'>"
+            f"<div style='font-size:12px;color:#14532d;text-transform:uppercase;'>Agresivo (con acciones)</div>"
+            f"<div style='font-size:24px;font-weight:700;color:#059669;'>{escenario_agresivo.get('ingresos', 0):,.0f}</div>"
+            f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>Ingresos 12m</div>"
+            f"<div style='font-size:12px;color:#64748b;'>{escenario_agresivo.get('ebitda', 0):,.0f} EBITDA</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with col3:
+        color_delta = "#059669" if delta_ingresos > 0 else "#dc2626" if delta_ingresos < 0 else "#64748b"
+        signo = "+" if delta_ingresos > 0 else ""
+        st.markdown(
+            f"<div style='padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;text-align:center;'>"
+            f"<div style='font-size:12px;color:#64748b;text-transform:uppercase;'>Delta ingresos</div>"
+            f"<div style='font-size:24px;font-weight:700;color:{color_delta};'>{signo}{delta_ingresos:,.0f}</div>"
+            f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>vs conservador</div>"
+            f"<div style='font-size:12px;color:#64748b;'>{signo}{delta_ebitda:,.0f} Δ EBITDA</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ---- Recomendación principal ----
+    st.divider()
+    st.markdown("### 🎯 Recomendación principal")
+    recomendacion = dossier.get("recomendacion_principal", {})
+    if recomendacion and recomendacion.get("decision"):
+        with c.panel(
+            recomendacion.get("decision", "Decisión principal"),
+            subtitulo=recomendacion.get("motivo", ""),
+            icono=":material/lightbulb:",
+        ):
+            st.markdown(
+                f"<div style='font-size:1.5rem;font-weight:700;color:{c.PALETA['primario']};'>{recomendacion.get('impacto_esperado', 0):+,.0f} impacto esperado</div>",
+                unsafe_allow_html=True,
+            )
+            st.caption(
+                f"Confianza: {recomendacion.get('confianza', 'N/A')} | Área: {recomendacion.get('area', 'general')}"
+            )
+    else:
+        c.vacio(
+            "No hay recomendación principal disponible.",
+            icono=":material/info:",
+            detalle="Importa más datos en 'Mis datos' para obtener recomendaciones más precisas.",
+        )
+
+    # ---- Alertas críticas ----
+    alertas = analisis.get("alertas", [])
+    alertas_criticas = [a for a in alertas if a.get("severidad") == "critica"]
+    if alertas_criticas:
+        st.divider()
+        st.markdown("### 🚨 Alertas críticas")
+        for alerta in alertas_criticas[:5]:
+            with c.panel(
+                f"{c.badge('CRÍTICA', 'rojo')} {alerta.get('titulo', 'Alerta')}",
+                subtitulo=alerta.get("detalle", ""),
+                icono=":material/error:",
+            ):
+                pass
+
+    # ---- Advertencias de gobernanza ----
+    advertencias = validacion.get("advertencias", [])
+    if advertencias:
+        st.divider()
+        st.markdown("### ⚠️ Avisos de gobernanza")
+        for adv in advertencias:
+            st.warning(
+                f"**{adv.get('area', 'General')}**: {adv.get('motivo', '')}"
+            )
+
+    # ---- Botón de reporte ----
+    st.divider()
+    st.markdown("### 📄 Reporte ejecutivo")
+    st.caption("Genera un documento HTML completo con todo el análisis para compartir con tu equipo o inversores.")
+    col_r1, col_r2 = st.columns([3, 1])
+    with col_r1:
+        st.info(
+            "El reporte incluye portada, KPIs, alertas, decisiones, escenarios y recomendación principal."
+        )
+    with col_r2:
+        if st.button("Generar reporte HTML", type="primary", icon=":material/description:", width="stretch"):
+            with st.spinner("Generando reporte ejecutivo..."):
+                try:
+                    reporte = resultado.get("reporte", {})
+                    if reporte and reporte.get("ruta"):
+                        st.success(f"Reporte generado: {reporte['ruta']}")
+                        with open(reporte["ruta"], "rb") as fh:
+                            st.download_button(
+                                "Descargar reporte HTML",
+                                fh.read(),
+                                file_name=reporte["ruta"].split("/")[-1],
+                                mime="text/html",
+                                icon=":material/download:",
+                                width="stretch",
+                            )
+                    else:
+                        st.error("No se pudo generar el reporte.")
+                except Exception as e:
+                    st.error(f"No se pudo generar el reporte: {e}")
 
 
 if __name__ == "__main__":
