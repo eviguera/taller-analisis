@@ -4,10 +4,11 @@ Cada tupla contiene: (titulo, clave url, icono Material, funcion principal, es_p
 """
 
 from . import (resumen, negocio, acciones, alertas, clientes, servicios, vehiculos,
-               inventario, predicciones, simulador, datos, reportes)
+               inventario, predicciones, simulador, datos, reportes, decisiones)
 
 PAGINAS = [
     ("Resumen general", "resumen", ":material/dashboard:", resumen.principal, True),
+    ("Decisiones", "decisiones", ":material/trending_up:", decisiones.principal, False),
     ("Predicciones", "predicciones", ":material/auto_graph:", predicciones.principal, False),
     ("Acciones", "acciones", ":material/task_alt:", acciones.principal, False),
     ("Alertas", "alertas", ":material/notifications_active:", alertas.principal, False),
