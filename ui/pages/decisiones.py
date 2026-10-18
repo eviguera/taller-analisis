@@ -5,6 +5,9 @@ con una recomendación de acción clara en cada uno.
 
 Diseño minimalista: un número principal, tablas simples, color solo para
 significado (rojo = actuar, ámbar = revisar, verde = todo bien).
+
+Incluye indicadores predictivos: cuánto se facturará el mes que viene
+(modelo de Gradient Boosting) y el escenario 12 meses (simulador what-if).
 """
 import pandas as pd
 import streamlit as st
@@ -33,7 +36,7 @@ def principal():
         )
         return
 
-    resumen = decisiones.indicadores_decision(data)
+    resumen = decisiones.indicadores_decision(data, cfg=cfg)
 
     c.cabecera(
         "Decisiones de tu negocio",

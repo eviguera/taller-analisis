@@ -4,10 +4,11 @@ Este módulo entrega, a partir de los datos ya cargados en el almacén, los
 indicadores que un dueño de pyme necesita para decidir hoy:
 
 * ¿Mis ingresos crecieron o cayeron este mes?
+* ¿Cuánto voy a facturar el mes que viene? (predicción del modelo)
 * ¿Qué clientes están en riesgo de irse?
 * ¿Cuánto dinero tengo pendiente de cobrar?
 * ¿Qué productos se me están acabando?
-* ¿Cuánto voy a facturar el mes que viene?
+* ¿Qué escenario me conviene: hacer nada o aplicar acciones de mejora?
 
 Cada indicador viene con una recomendación de acción (Actuar / Revisar / Todo bien)
 para que el dueño sepa qué hacer sin tener que interpretar gráficos complejos.
@@ -305,23 +306,166 @@ def indicador_ticket_promedio(df: pd.DataFrame) -> Indicador:
 
 
 # ------------------------------------------------------------------
+#  Indicadores con modelo predictivo (requieren cfg)
+# ------------------------------------------------------------------
+
+def indicador_ingresos_proyectados(data: dict, cfg=None) -> Indicador:
+    """Ingresos esperados el mes que viene, usando el modelo de Gradient Boosting.
+
+    Si no hay suficientes datos para entrenar el modelo, devuelve un indicador
+    de revisar sin fallar.
+    """
+    facturas = data.get("facturas", pd.DataFrame())
+    if facturas.empty or "fecha" not in facturas.columns or "total" not in facturas.columns:
+        return Indicador(
+            nombre="Ingresos esperados (próximo mes)",
+            valor="Sin datos",
+            accion="revisar",
+            detalle="Necesitas facturas con fecha y total para proyectar.",
+        )
+
+    try:
+        from ..predictions import Predictor
+    except Exception:
+        return Indicador(
+            nombre="Ingresos esperados (próximo mes)",
+            valor="No disponible",
+            accion="revisar",
+            detalle="No se pudo cargar el módulo de predicciones.",
+        )
+
+    try:
+        predictor = Predictor(data, cfg=cfg)
+        res = predictor.predecir_ingresos(meses_futuros=1)
+    except Exception as e:
+        return Indicador(
+            nombre="Ingresos esperados (próximo mes)",
+            valor="Sin datos suficientes",
+            accion="revisar",
+            detalle="El modelo necesita al menos 5 meses de facturas para entrenar.",
+        )
+
+    predicciones = res.get("predicciones")
+    if predicciones is None or predicciones.empty:
+        return Indicador(
+            nombre="Ingresos esperados (próximo mes)",
+            valor="Sin datos",
+            accion="revisar",
+            detalle="El modelo no devolvió predicciones.",
+        )
+
+    ingreso_proyectado = float(predicciones["ingresos_predichos"].iloc[0])
+    mes_proximo = str(predicciones["fecha"].iloc[0])
+
+    evaluacion = res.get("evaluacion", {})
+    mae = _seguro_numero(evaluacion.get("mae", 0))
+
+    accion = "ok"
+    detalle = (
+        f"El modelo proyecta ingresos de {ingreso_proyectado:,.0f} para {mes_proximo}. "
+        f"Error promedio del modelo: {mae:,.0f}."
+    )
+
+    return Indicador(
+        nombre="Ingresos esperados (próximo mes)",
+        valor=f"{ingreso_proyectado:,.0f}",
+        accion=accion,
+        detalle=detalle,
+    )
+
+
+def indicador_escenario_simulador(data: dict, cfg=None) -> Indicador:
+    """Escenario 12 meses: comparar no hacer nada (conservador) vs aplicar acciones (agresivo).
+
+    Usa el simulador what-if para calcular el delta de ingresos y EBITDA entre
+    ambos escenarios.
+    """
+    facturas = data.get("facturas", pd.DataFrame())
+    if facturas.empty or "fecha" not in facturas.columns or "total" not in facturas.columns:
+        return Indicador(
+            nombre="Escenario 12 meses",
+            valor="Sin datos",
+            accion="revisar",
+            detalle="Necesitas facturas para proyectar escenarios.",
+        )
+
+    try:
+        from ..analyzer import Analyzer
+        from ..negocio import escenarios_proyeccion
+    except Exception:
+        return Indicador(
+            nombre="Escenario 12 meses",
+            valor="No disponible",
+            accion="revisar",
+            detalle="No se pudo cargar el módulo de simulador.",
+        )
+
+    try:
+        analyzer = Analyzer(data)
+        escenarios = escenarios_proyeccion(analyzer, cfg or {})
+    except Exception:
+        return Indicador(
+            nombre="Escenario 12 meses",
+            valor="Sin datos suficientes",
+            accion="revisar",
+            detalle="El simulador necesita al menos 12 meses de historial.",
+        )
+
+    if not escenarios:
+        return Indicador(
+            nombre="Escenario 12 meses",
+            valor="Sin datos",
+            accion="revisar",
+            detalle="No se pudieron calcular los escenarios.",
+        )
+
+    conservador = escenarios.get("conservador", {})
+    agresivo = escenarios.get("agresivo", {})
+    delta_ingresos = float(escenarios.get("delta_ingresos", 0))
+    delta_ebitda = float(escenarios.get("delta_ebitda", 0))
+
+    ingresos_con = _seguro_numero(conservador.get("ingresos", 0))
+    ingresos_agr = _seguro_numero(agresivo.get("ingresos", 0))
+
+    if delta_ingresos > 0:
+        accion = "ok"
+        detalle = (
+            f"Ejecutar acciones de mejora podría generar {delta_ingresos:,.0f} "
+            f"más en ingresos y {delta_ebitda:,.0f} más en EBITDA a 12 meses."
+        )
+    else:
+        accion = "revisar"
+        detalle = "El escenario conservador ya es el mejor estimado con los datos actuales."
+
+    return Indicador(
+        nombre="Escenario 12 meses",
+        valor=f"{delta_ingresos:+,.0f}",
+        accion=accion,
+        detalle=detalle,
+    )
+
+
+# ------------------------------------------------------------------
 #  Función principal
 # ------------------------------------------------------------------
 
-def indicadores_decision(data: dict) -> ResumenDecision:
+def indicadores_decision(data: dict, cfg=None) -> ResumenDecision:
     """Calcula todos los indicadores de decisión a partir de los datos cargados.
 
     data: diccionario de DataFrames tal como lo devuelve load_all() del pipeline.
+    cfg: AppConfig opcional, necesaria para los indicadores de predicción.
     """
     facturas = data.get("facturas", pd.DataFrame())
     inventario = data.get("inventario", pd.DataFrame())
 
     indicadores = [
         indicador_ingresos(facturas),
+        indicador_ingresos_proyectados(data, cfg),
         indicador_clientes_en_riesgo(facturas),
         indicador_facturas_pendientes(facturas),
         indicador_stock_bajo(inventario),
         indicador_ticket_promedio(facturas),
+        indicador_escenario_simulador(data, cfg),
     ]
 
     # Contar cuántas requieren acción inmediata
