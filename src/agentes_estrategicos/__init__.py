@@ -29,6 +29,14 @@ from .analyst import analizar_datos_negocio
 from .strategy import generar_dossier_de_decision
 from .governance import validar_recomendaciones
 from .report import generar_reporte_ejecutivo
+from .data_engineer_tooling import (
+    cargar_con_dlt,
+    validar_con_daffy,
+    crear_regla_calidad,
+    validar_dataframe_con_contrato,
+    ReglaCalidad,
+    ResultadoCalidad,
+)
 
 __all__ = [
     "ejecutar_pipeline_de_decisiones",
@@ -36,4 +44,10 @@ __all__ = [
     "generar_dossier_de_decision",
     "validar_recomendaciones",
     "generar_reporte_ejecutivo",
+    "cargar_con_dlt",
+    "validar_con_daffy",
+    "crear_regla_calidad",
+    "validar_dataframe_con_contrato",
+    "ReglaCalidad",
+    "ResultadoCalidad",
 ]

@@ -53,6 +53,9 @@ def _instanciar(fmt: str) -> BaseLoader:
     if fmt == "parquet":
         from .parquet_loader import ParquetLoader
         return ParquetLoader()
+    if fmt == "dlt":
+        from .dlt_loader import DltLoader
+        return DltLoader()
     raise ValueError(f"Cargador no disponible para formato: {fmt}")
 
 
