@@ -154,20 +154,21 @@ def principal():
                     detalle=str(e) if str(e) else "Revisa que existan facturas con fechas de visita.",
                 )
                 sugerencias = None
-            if sugerencias is None or sugerencias.empty:
-                with c.panel("Clientes sugeridos para contacto",
-                             "Acciones recomendadas por recencia de visita",
-                             icono=":material/campaign:"):
-                    c.dataframe(
-                        sugerencias, alto=300,
-                        column_config={
-                            "cliente": "Cliente",
-                            "dias_sin_visita": st.column_config.NumberColumn("Dias sin visita"),
-                            "sugerencia": "Sugerencia",
-                        },
-                    )
-            else:
-                st.success("No hay campanas de reactivacion pendientes por ahora.")
+
+            df_plan = sugerencias if sugerencias is not None else pd.DataFrame(
+                columns=["cliente", "dias_sin_visita", "sugerencia"]
+            )
+            with c.panel("Clientes sugeridos para contacto",
+                         "Acciones recomendadas por recencia de visita",
+                         icono=":material/campaign:"):
+                c.dataframe(
+                    df_plan, alto=300,
+                    column_config={
+                        "cliente": "Cliente",
+                        "dias_sin_visita": st.column_config.NumberColumn("Dias sin visita"),
+                        "sugerencia": "Sugerencia",
+                    },
+                )
 
 
 if __name__ == "__main__":

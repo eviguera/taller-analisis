@@ -1,4 +1,4 @@
-"""Validación de calidad de datos usando reglas declarativas (estilo daffy).
+r"""Validación de calidad de datos usando reglas declarativas (estilo daffy).
 
 Este módulo proporciona validación de DataFrames con contratos declarativos,
 inspirado en la librería daffy (https://github.com/mgillr/daffy), pero
@@ -12,7 +12,7 @@ Permite definir reglas de validación de forma declarativa:
     reglas = [
         ReglaCalidad(campo="id", tipo="int", nulo=False, unicidad=True),
         ReglaCalidad(campo="total", tipo="float", minimo=0),
-        ReglaCalidad(campo="email", tipo="str", patron=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
+                ReglaCalidad(campo="email", tipo="str", patron=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
     ]
 
     resultado = validar_con_daffy(df_clientes, reglas)

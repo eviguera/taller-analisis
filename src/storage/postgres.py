@@ -36,6 +36,7 @@ import pandas as pd
 import psycopg2
 import psycopg2.errors
 from psycopg2.extras import execute_values
+from psycopg2 import sql
 
 from ..puertos import PuertoAlmacen
 from .dialecto import DialectoPostgres
@@ -375,16 +376,11 @@ def asegurar_base_workspace(cfg) -> bool:
     respuesta que la CLI traduce a ``creada`` / ``ya existia``. Es
     idempotente: volver a llamar sobre una base existente no la toca.
 
-    **Unica sentencia sin bind parameters del repo (regla 4).**
-    ``CREATE DATABASE`` no admite placeholders en PostgreSQL: el nombre de
-    base no es un valor, es un identificador de catalogo, asi que viaja
-    entre comillas dobles. Ese nombre **no** sale de ninguna entrada de
-    usuario ni de config: lo deriva siempre ``dbname_postgres(cfg)``, que
-    sanea la clave del workspace (solo queda ``[a-z0-9_]``) y valida los
-    63 bytes de Postgres, de modo que no hay comilla ni punto y coma por
-    donde inyectar. Ninguna otra sentencia de este modulo se sale del
-    bind; la comprobacion de existencia de abajo, por ejemplo, si va con
-    ``%s``.
+    **Nota:** el `CREATE DATABASE` usa ``psycopg2.sql.Identifier`` para
+    sanear el nombre de base de datos, que proviene exclusivamente de
+    ``dbname_postgres(cfg)``, el cual sanea la clave del workspace
+    (solo queda ``[a-z0-9_]``) y valida los 63 bytes de Postgres. No hay
+    f-strings ni concatenación en el nombre de la base de datos.
 
     Si el usuario de ``GIRO_PG_USER`` no tiene permiso ``CREATEDB`` lanza
     ``RuntimeError`` con la accion concreta que debe ejecutar el operador
@@ -417,7 +413,7 @@ def asegurar_base_workspace(cfg) -> bool:
             if cur.fetchone() is not None:
                 return False
             try:
-                cur.execute(f'CREATE DATABASE "{nombre}"')
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(nombre)))
             except psycopg2.errors.DuplicateDatabase:
                 # Otra proceso la creo justo entre el SELECT y el CREATE:
                 # para el llamador la base ya esta. No es un error.

@@ -170,6 +170,7 @@ def principal():
             detalle=str(e) if str(e) else "Revisa la configuración de suscripción en el config del workspace.",
         )
         ue = None
+
     if ue is not None:
         c.kpi_grid([
             ("COGS por workspace", c.moneda(ue["costo_tenant"], cfg.moneda), None, None,

@@ -20,10 +20,24 @@ Este archivo se carga siempre. Los agentes especializados viven en `.opencode/ag
 | Reportes | `src/reporting/` — motor de reportes HTML white-label |
 | UI | `ui/` — `app.py`, `context.py` (adaptador fino que delega en `src.aplicacion`), `components.py`, `theme.py`, `login.py`, `pages/*.py` (12 páginas) |
 | Multi-tenant | `src/workspaces.py` |
+| Agentes de decisión | `src/agentes_estrategicos/` — motor de decisiones ejecutivas (KPIs, predicciones, simulador, white-label) |
 
-**Arquitectura hexagonal.** Las entradas (UI, API, CLI) llaman a `src/aplicacion`, que habla con `src/puertos`; las implementaciones concretas viven en `src/storage`. **El almacen se obtiene siempre con `get_store()` (`src/data_loader.py`) — es el único punto de decisión de motor** (DuckDB por defecto, Postgres con `GIRO_ALMACEN_MOTOR=postgres`, una base por workspace). Construir un `DataStore` a mano fuera de ese punto es un bug: el ETL, la UI y la API escribirían en sitios distintos.
+## Agentes especializados (`.opencode/agent/`)
 
-Datos de ejemplo: taller mecánico (50 clientes, 88 vehículos, 40 servicios, 350 facturas, 24 productos). Genera con `generate_data.py`. **El esquema es transversal** — el producto se vende a cualquier negocio. No hardcodees "taller", "vehículo" ni "kilometraje" en lógica de negocio.
+Hay **71 agentes especializados** disponibles. Cada uno es un experto en un dominio específico. Invócalos según la tarea:
+
+| Agente | Propósito | Cuándo usar |
+|--------|-----------|-------------|
+| `python-senior` | Lógica de negocio Python, núcleo hexagonal | Lógica de negocio, casos de uso, núcleo |
+| `sql-arquitecto` | Esquema, SQL, consultas, conectores | SQL, vistas analíticas, conectores ERP |
+| `ui-engineer` | UI, CSS, páginas Streamlit | Páginas de UI, componentes, tema, accesibilidad |
+| `ux-researcher` | Flujo de usuario, usabilidad, recorridos | Solo lectura, no implementa |
+| `code-reviewer` | Revisa código por calidad, seguridad y mantenibilidad | Después de escribir/modificar código |
+| `docker-expert` | Contenedores, despliegue, Dockerfile, docker-compose | Contenedores, despliegue, infraestructura |
+| `data-analyst` | KPIs, métricas, modelos, insights | Analítica de datos, métricas de negocio |
+| `data-engineer` | Carga de datos, ETL, conectores, calidad | Pipeline ETL, carga de archivos, conectores ERP |
+
+> **Nota**: Para ver la lista completa de 71 agentes, revisa el directorio `.opencode/agent/`. Cada agente tiene su propio archivo `.md` con instrucciones específicas.
 
 ## Cómo trabajar aquí
 
@@ -68,26 +82,28 @@ docker compose up -d --build
 7. **Cero efectos secundarios a nivel de import.** Nada de `st.set_page_config`, `duckdb.connect()` ni lectura de disco en import.
 8. **Nada de `except Exception: pass`.** Un error tragado convierte un bug visible en uno invisible.
 9. **No añadas dependencias** sin justificarlo. Stack actual: pandas, numpy, duckdb, pyarrow, scikit-learn, plotly, matplotlib, streamlit, jinja2, joblib, pyreadstat, PyYAML, sqlalchemy, psycopg2-binary, pymysql.
-10. **No introducas frameworks nuevos.** Es un monolito de analítica. No traigas React, un ORM ni una capa de abstracción de servicios. **Excepción ya decidida y agotada:** FastAPI existe (adaptador de entrada `src/api/`, decisión explícita del dueño de abrir esta regla). No se autoriza ningún otro framework nuevo; si te apetece uno, pregúntalo antes de instalarlo.
+10. **No introduzcas frameworks nuevos.** Es un monolito de analítica. No traigas React, un ORM ni una capa de abstracción de servicios. **Excepción ya decidida y agotada:** FastAPI existe (adaptador de entrada `src/api/`, decisión explícita del dueño de abrir esta regla). No se autoriza ningún otro framework nuevo; si te apetece uno, pregúntalo antes de instalarlo.
 11. **No hagas commit ni push** salvo que el usuario lo pida explícitamente.
 
 ## Dónde vive cada cosa
 
-- **Lógica de negocio / Python** → `python-senior`
-- **UI, CSS, páginas Streamlit** → `ui-engineer`. Usa los wrappers de `ui/components.py` (`kpi_grid`, `panel`, `vacio`, `badge`, `miles`, `moneda`, `grafico_*`) y los tokens de `ui/theme.py`. **Nunca escribas `st.plotly_chart` crudo ni HTML suelto en una página.** El tema base está en `.streamlit/config.toml` y no se edita para arreglar una pantalla.
-- **Flujo de usuario, usabilidad, recorridos** → `ux-researcher` (solo lectura, no implementa)
-- **Esquema, SQL, consultas, conectores** → `sql-arquitecto`
-- **Carga de datos, ETL, calidad** → `data-engineer`
-- **KPIs, métricas, modelos, insights** → `data-analyst`
-- **Revisión antes de entregar** → `code-reviewer` (solo lectura, no arregla)
-- **Contenedores** → `docker-expert`
+| | |
+|---|---|
+| **Lógica de negocio / Python** → | `python-senior` |
+| **UI, CSS, páginas Streamlit** → | `ui-engineer`. Usa los wrappers de `ui/components.py` (`kpi_grid`, `panel`, `vacio`, `badge`, `miles`, `moneda`, `grafico_*`) y los tokens de `ui/theme.py`. **Nunca escribas `st.plotly_chart` crudo ni HTML suelto en una página.** El tema base está en `.streamlit/config.toml` y no se edita para arreglar una pantalla. |
+| **Flujo de usuario, usabilidad, recorridos** → | `ux-researcher` (solo lectura, no implementa) |
+| **Esquema, SQL, consultas, conectores** → | `sql-arquitecto` |
+| **Carga de datos, ETL, calidad** → | `data-engineer` |
+| **KPIs, métricas, modelos, insights** → | `data-analyst` |
+| **Revisión antes de entregar** → | `code-reviewer` (solo lectura, no arregla) |
+| **Contenedores** → | `docker-expert` |
 
 ## Comandos de UI (`/ade-*`)
 
 Pipeline de diseño en 3 pasos, adaptado de `agentic-design-engineering`. **El orden importa**: una atmósfera sobre una estructura rota es decoración.
 
 | Comando | Qué hace | Umbral |
-|---|---|---|
+|---------|----------|--------|
 | `/ade-build [pantalla]` | Audita y **repara** A/L/C/E/R, en orden A→L→C→E→R | 40/50 |
 | `/ade-style [pantalla]` | Descubre la metáfora física y construye la atmósfera en 5 ciclos | fidelidad >= 3/4 |
 | `/ade-write [pantalla]` | Reescribe el copy en español: botones, errores, vacíos | 40/70 |
@@ -97,6 +113,10 @@ Sin argumentos, cada uno trabaja sobre `ui/pages/resumen.py` y lo dice.
 `/ade-style` **exige** que `/ade-build` haya pasado 40/50. `/ade-write` puede correr solo.
 
 **Todos se ejecutan con las mismas reglas de `ui-engineer`:** wrappers de `ui/components.py`, nada de `st.plotly_chart` crudo, `config.toml` es global, y los tres deben funcionar en **modo claro y oscuro**. Ninguno escribe archivos de log en el repo: el reporte va en la conversación. Este producto se entrega a clientes, no se ensucia con artefactos de auditoría.
+
+## Datos de ejemplo
+
+`generate_data.py` crea 50 clientes, 88 vehículos, 40 servicios, 350 facturas y 24 productos de inventario con datos realistas ficticios. **El esquema es transversal** — el producto se vende a cualquier negocio. No hardcodees "taller", "vehículo" ni "kilometraje" en lógica de negocio.
 
 ## Git
 

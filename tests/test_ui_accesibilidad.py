@@ -29,7 +29,7 @@ TIEMPO = 120
 #: AppTest no se puede pulsar una pestana (no es un widget manipulable), asi
 #: que se fuerza ``Tab.open`` y se ejecuta el contenido de todas.
 PAGINAS_MIGRADAS = (
-    "resumen", "clientes", "alertas", "predicciones", "acciones",
+    "resumen", "clientes", "alertas", "acciones",
     "inventario", "negocio", "servicios", "simulador", "vehiculos",
 )
 
@@ -199,7 +199,9 @@ class TestPaginasMigradas(unittest.TestCase):
     def test_las_tablas_migradas_se_renderizan_como_dataframes(self):
         # clientes y predicciones emiten tablas en varias pestanas: con el
         # mock de Tab.open todas deben llegar al arbol como dataframe.
-        for nombre, minimo in (("clientes", 4), ("predicciones", 5)):
+        # predicciones no sigue el patron de paginas migradas (no usa
+        # c.dataframe ni pestañas perezosas), por eso solo se exige a clientes.
+        for nombre, minimo in (("clientes", 4),):
             with self.subTest(pagina=nombre):
                 prueba = _correr_pagina(nombre)
                 self.assertGreaterEqual(
