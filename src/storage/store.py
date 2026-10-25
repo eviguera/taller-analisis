@@ -126,6 +126,25 @@ def construir_estructura_compartida(almacen: "DataStore",
             vistas_fallidas.append(nombre_vista)
     almacen.vistas_fallidas = vistas_fallidas
 
+    # Crear índices secundarios en tablas core para consultas analíticas frecuentes.
+    try:
+        índices_core = [
+            ('core.facturas', '(estado, fecha)'),
+            ('core.facturas', '(cliente_id)'),
+            ('core.facturas', '(vehiculo_id)'),
+            ('core.factura_detalle', '(factura_id)'),
+            ('core.factura_detalle', '(servicio_id)'),
+            ('core.vehiculos', '(cliente_id)'),
+            ('core.inventario', '(stock_actual, stock_minimo)'),
+        ]
+        for tabla, columnas in índices_core:
+            nombre_idx = f"idx_{tabla.replace('.', '_').replace(' ', '_')}_{columnas.replace(', ', '_').replace(' ', '_')}"
+            almacen.ejecutar(f"CREATE INDEX IF NOT EXISTS {nombre_idx} ON {tabla} ({columnas})")
+    except Exception as e:  # noqa: BLE001 — los índices son optimización, no crítica
+        log.warning("No se pudieron crear algunos índices: %s", e)
+
+    almacen.vistas_fallidas = vistas_fallidas
+
     return {
         nombre: len(tablas[nombre])
         for nombre in ORDEN_CARGA

@@ -18,12 +18,20 @@ Puertos:
   * `PuertoRegistroModelos` -> modelos entrenados entre sesiones
   * `PuertoCarga`          -> lectura de archivos fuente (CSV, Excel, PSPP)
   * `PuertoIdentidad`      -> identidad federada (SSO/OIDC) de la peticion
+  * `PuertoAgenteIA`        -> asesor de negocio con IA (grounded)
 """
 
 from .almacen import PuertoAlmacen
 from .carga import CargaResultado, PuertoCarga
 from .identidad import PuertoIdentidad
 from .modelos import PuertoRegistroModelos
+from .agente_ia import (
+    AccionPrioritaria,
+    Hallazgo,
+    PuertoAgenteIA,
+    RespuestaAsesor,
+    Riesgo,
+)
 
 __all__ = [
     "PuertoAlmacen",
@@ -31,4 +39,9 @@ __all__ = [
     "PuertoCarga",
     "PuertoIdentidad",
     "CargaResultado",
+    "PuertoAgenteIA",
+    "RespuestaAsesor",
+    "Hallazgo",
+    "AccionPrioritaria",
+    "Riesgo",
 ]

@@ -25,7 +25,6 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import dlt
 import pandas as pd
 
 from src.loaders.base import CargaResultado, PuertoCarga
@@ -54,6 +53,14 @@ class DltLoader(PuertoCarga):
         Retorna:
             CargaResultado con los datos cargados.
         """
+        try:
+            import dlt
+        except ImportError as exc:
+            raise RuntimeError(
+                "El cargador dlt requiere el paquete opcional 'dlt'. "
+                "Instálalo solo si vas a usar conectores con motor=dlt."
+            ) from exc
+
         try:
             # Extraer parámetros de dlt
             fuente = str(ruta)

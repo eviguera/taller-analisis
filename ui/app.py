@@ -10,6 +10,8 @@ decide que controles mostrar segun el rol.
 
 import streamlit as st
 
+import pandas as pd  # noqa: WPS433 — usado en _necesita_onboarding
+
 from ui import context
 from ui import login as ui_login
 from ui import theme as tema_mod
@@ -76,6 +78,24 @@ def _selector_workspace(sesion: auth.Sesion):
                     st.error(str(e))
 
 
+def _necesita_onboarding() -> bool:
+    """True si es la primera vez y el workspace no tiene datos."""
+    if st.session_state.get("_onboarding_completado"):
+        return False
+    if context.en_kiosco():
+        return False
+    try:
+        cfg = context.obtener_config()
+        data = context.cargar_datos(cfg)
+        hay = bool(data) and any(
+            isinstance(df, pd.DataFrame) and not df.empty
+            for df in data.values()
+        )
+        return not hay
+    except Exception:  # noqa: BLE001 — si no se pueden leer datos, asumimos vacio
+        return True
+
+
 def main():
     cfg_head = context.obtener_config()
     whitelabel = cfg_head.whitelabel or {}
@@ -92,6 +112,14 @@ def main():
     # Gate de sesion: sin identidad no se renderiza nada del producto.
     if not (sesion.hay_sesion or sesion.modo_abierto or sesion.visitante):
         ui_login.pantalla_login()
+        st.stop()
+
+    # Onboarding guiado: primera vez sin datos.
+    # Se renderiza directamente (sin st.navigation) para evitar conflictos
+    # con el router. Al finalizar, st.switch_page lleva al dashboard.
+    if not kiosco and _necesita_onboarding():
+        from ui.pages import onboarding as onb
+        onb.principal()
         st.stop()
 
     # El kiosco es la vista de venta: sin configuracion, sin escribir nada.

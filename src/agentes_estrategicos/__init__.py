@@ -37,6 +37,14 @@ from .data_engineer_tooling import (
     ReglaCalidad,
     ResultadoCalidad,
 )
+# Importar agentes_base para que el registro de BaseAgent ocurra al cargar el paquete.
+from . import agentes_base  # noqa: F401 — registro de agentes BaseAgent
+from src.core.agente import (
+    BaseAgent,
+    ResultadoAgente,
+    listar_agentes,
+    obtener_agente,
+)
 
 __all__ = [
     "ejecutar_pipeline_de_decisiones",
@@ -50,4 +58,8 @@ __all__ = [
     "validar_dataframe_con_contrato",
     "ReglaCalidad",
     "ResultadoCalidad",
+    # Arquitectura BaseAgent (nueva, compatible con la API existente).
+    "listar_agentes",
+    "obtener_agente",
+    "ResultadoAgente",
 ]

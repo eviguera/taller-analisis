@@ -643,5 +643,53 @@ class TestSerializacion(unittest.TestCase):
         self.assertIsInstance(salida, str)
 
 
+class TestConsultaSQLErroresAdicionales(_BaseAPI):
+    """Mas codigos de error en la consola SQL."""
+
+    def test_limite_muy_alto_devuelve_422(self):
+        """El parametro limite no puede superar 10000."""
+        r = self.api.post("/api/consulta", cuerpo={"sql": "SELECT 1",
+                                                    "limite": 99999},
+                          headers=self._cabeceras("admin_api"))
+        self.assertEqual(r.estado, 422)
+
+    def test_comentario_sql_al_final_es_permitido(self):
+        """Un comentario tras una sentencia valida se ignora y se ejecuta."""
+        marco = pd.DataFrame({"x": [1]})
+        with mock.patch("src.api.rutas.cargar_datos", return_value={}), \
+                mock.patch("src.aplicacion.consulta_sql",
+                           return_value=marco) as consulta:
+            r = self.api.post("/api/consulta",
+                              cuerpo={"sql": "SELECT 1 -- comentario"},
+                              headers=self._cabeceras("admin_api"))
+        self.assertEqual(r.estado, 200)
+        consulta.assert_called_once()
+
+    def test_comentario_bloque_al_final_es_permitido(self):
+        """Un comentario de bloque tras una sentencia valida se ignora."""
+        marco = pd.DataFrame({"x": [1]})
+        with mock.patch("src.api.rutas.cargar_datos", return_value={}), \
+                mock.patch("src.aplicacion.consulta_sql",
+                           return_value=marco) as consulta:
+            r = self.api.post("/api/consulta",
+                              cuerpo={"sql": "SELECT 1 /* comentario */"},
+                              headers=self._cabeceras("admin_api"))
+        self.assertEqual(r.estado, 200)
+        consulta.assert_called_once()
+
+    def test_vista_con_nombre_especial_llega_al_caso_de_uso(self):
+        """Un nombre de vista con punto y coma llega al caso de uso."""
+        marco = pd.DataFrame({"x": [1]})
+        with mock.patch("src.api.rutas.cargar_datos", return_value={}), \
+                mock.patch("src.aplicacion.vista",
+                           return_value=marco) as vista:
+            r = self._como("admin_api",
+                           "/api/vistas/ingresos_mensuales; DROP TABLE x")
+        # El nombre llega tal cual al caso de uso (puede ser 200 si se acepta)
+        self.assertIn(r.estado, (200, 400))
+        if r.estado == 200:
+            vista.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

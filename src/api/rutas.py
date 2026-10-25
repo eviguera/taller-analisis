@@ -92,7 +92,16 @@ def salud() -> Dict[str, Any]:
 #  Estado analitico
 # ------------------------------------------------------------------
 
-@router.get("/estado", response_model=Estado, summary="Radiografia analitica del workspace")
+@router.get(
+    "/estado", response_model=Estado,
+    summary="Radiografia analitica del workspace",
+    responses={
+        401: {"description": "No autenticado"},
+        400: {"description": "Workspace mal formado"},
+        404: {"description": "Empresa inexistente"},
+        500: {"description": "Error interno"},
+    },
+)
 def estado(ctx: Contexto = Depends(deps.contexto)) -> Dict[str, Any]:
     """KPIs, cartera, calidad y alertas del workspace efectivo de la sesion.
 
@@ -153,8 +162,15 @@ def vistas(ctx: Contexto = Depends(deps.contexto)) -> Dict[str, Any]:
                        "vistas": list(aplicacion.VISTAS_PARA_EXPORTAR)})
 
 
-@router.get("/vistas/{nombre}", response_model=DatosVista,
-           summary="Consulta una vista analitica")
+@router.get(
+    "/vistas/{nombre}", response_model=DatosVista,
+    summary="Consulta una vista analitica",
+    responses={
+        401: {"description": "No autenticado"},
+        404: {"description": "Vista fuera de la allowlist o empresa inexistente"},
+        500: {"description": "Error interno"},
+    },
+)
 def vista(
     nombre: str,
     ctx: Contexto = Depends(deps.contexto),
@@ -192,8 +208,16 @@ def vista(
 #  Consola SQL (solo administracion)
 # ------------------------------------------------------------------
 
-@router.post("/consulta", response_model=ConsultaResultado,
-            summary="Consulta SQL de solo lectura (administracion)")
+@router.post(
+    "/consulta", response_model=ConsultaResultado,
+    summary="Consulta SQL de solo lectura (administracion)",
+    responses={
+        401: {"description": "No autenticado"},
+        403: {"description": "Sin permiso consola_sql"},
+        400: {"description": "Consulta no valida o error de ejecucion"},
+        500: {"description": "Error interno"},
+    },
+)
 def consulta(
     cuerpo: ConsultaSQL,
     ctx: Contexto = Depends(deps.permiso_consola_sql),
@@ -249,8 +273,16 @@ def consulta(
 #  Empresas
 # ------------------------------------------------------------------
 
-@router.get("/empresas", response_model=ListadoEmpresas,
-           summary="Empresas visibles para la sesion")
+@router.get(
+    "/empresas", response_model=ListadoEmpresas,
+    summary="Empresas visibles para la sesion",
+    responses={
+        401: {"description": "No autenticado"},
+        400: {"description": "Workspace mal formado"},
+        404: {"description": "Empresa inexistente"},
+        500: {"description": "Error interno"},
+    },
+)
 def empresas(ctx: Contexto = Depends(deps.contexto)) -> Dict[str, Any]:
     """Catalogo de la sesion: siempre ``principal`` + las asignadas.
 

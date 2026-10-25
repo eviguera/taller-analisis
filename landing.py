@@ -3,14 +3,15 @@
 Correr local:  streamlit run landing.py
 En la nube (HF Spaces / Community Cloud): apuntar el entry file a landing.py
 
-El CTA "Ver demo" enlaza a la app analitica en modo presentacion (kiosco),
-que oculta los paneles de configuracion para una demo limpia.
+Dos puntos de entrada:
+  * "Ver demo con datos de ejemplo" -> dashboard en modo kiosco (solo lectura,
+    con datos de ejemplo para ver el producto en accion).
+  * "Empezar desde cero" -> dashboard vacio con onboarding guiado para
+    configurar tu propio negocio y cargar tus datos.
 
-La URL del demo se toma de la variable de entorno ``GIRO_DEMO_URL``
-(default: ``/?kiosco=1``, util para HF Spaces o reverse-proxy de un solo
-origen). En un contenedor con dos puertos apuntala:
-    GIRO_DEMO_URL=http://localhost:8501/?kiosco=1
-y en produccion usa tu dominio publico del dashboard.
+Las URLs se toman de variables de entorno:
+  * GIRO_DEMO_URL        (default: http://localhost:8501/?kiosco=1)
+  * GIRO_START_URL       (default: http://localhost:8501/)
 """
 
 import os
@@ -21,7 +22,8 @@ from ui.theme import DEFAULT_TEMA
 
 
 def main() -> None:
-    DEMO_URL = os.environ.get("GIRO_DEMO_URL", "/?kiosco=1")
+    DEMO_URL = os.environ.get("GIRO_DEMO_URL", "http://localhost:8501/?kiosco=1")
+    START_URL = os.environ.get("GIRO_START_URL", "http://localhost:8501/")
 
     PRIM = DEFAULT_TEMA["color_primario"]
     SEC = DEFAULT_TEMA["color_secundario"]
@@ -105,8 +107,11 @@ def main() -> None:
       <p>Conecta tus datos, GIRO modela tu empresa, predice lo que viene y te dice
       <b>qué hacer y con quién</b>: reabastece tu inventario, reactiva clientes en riesgo,
       anticipa el mantenimiento de tus activos y alerta antes de que duela.</p>
-      <a class="cta" href="{DEMO_URL}">Ver demo en vivo</a>
-      <a class="cta alt" href="mailto:ventas@giroanalytics.com?subject=Demo%20GIRO">Pedir demo personalizada</a>
+      <div style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-top:var(--space-3);">
+        <a class="cta" href="{DEMO_URL}">Ver demo con datos de ejemplo</a>
+        <a class="cta alt" href="{START_URL}">Empezar desde cero</a>
+      </div>
+      <a class="cta alt" href="mailto:ventas@giroanalytics.com?subject=Demo%20GIRO" style="margin-top:var(--space-2);">Pedir demo personalizada</a>
     </div>
     """, unsafe_allow_html=True)
 

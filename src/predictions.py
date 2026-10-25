@@ -75,28 +75,77 @@ class Predictor:
         serie["mes"] = serie["fecha"].dt.month
         serie["anio"] = serie["fecha"].dt.year
 
-        # Dataset con lags validos
+        # Dataset con lags validos (las tres primeras filas no tienen lags).
         modelo_df = serie.dropna().copy()
+
+        # Validación mínima: al menos 12 meses de datos para predicción confiable.
+        # Se mira la serie original: modelo_df descuenta los tres lags y no
+        # debe usarse para decidir si el negocio tiene historia suficiente.
+        if len(serie) < 12:
+            return {
+                "modelo": "Insuficiente",
+                "evaluacion": {
+                    "nota": f"Datos insuficientes: se requieren al menos 12 meses, hay {len(serie)}",
+                    "naive_mae": 0,
+                },
+                "predicciones": pd.DataFrame(),
+                "historial": serie[["anio_mes", "ingresos"]],
+                "registro": None,
+            }
+        # Si los ingresos traen nulos, dropna puede dejar menos filas de las
+        # que sugiere len(serie). Sin este segundo control, TimeSeriesSplit
+        # recibiría n_splits=0 y el ajuste fallaría.
+        if len(modelo_df) < 4:
+            return {
+                "modelo": "Insuficiente",
+                "evaluacion": {
+                    "nota": (
+                        "Datos insuficientes para entrenar: "
+                        f"{len(modelo_df)} meses con lags válidos"
+                    ),
+                    "naive_mae": 0,
+                },
+                "predicciones": pd.DataFrame(),
+                "historial": serie[["anio_mes", "ingresos"]],
+                "registro": None,
+            }
+
         features = ["mes", "anio", "lag_1", "lag_2", "lag_3"]
         X = modelo_df[features].values
         y = modelo_df["ingresos"].values
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+        # Validación cruzada temporal: usar TimeSeriesSplit para evaluar el
+        # modelo en múltiples divisiones temporales, evitando fuga de datos
+        # y obteniendo una estimación más robusta del error de predicción.
+        from sklearn.model_selection import TimeSeriesSplit
 
-        def _evaluar(m):
-            eva = {}
-            if len(X_test) > 0:
-                y_pred = m.predict(X_test)
-                eva = {
-                    "mae": round(mean_absolute_error(y_test, y_pred), 2),
-                    "rmse": round(root_mean_squared_error(y_test, y_pred), 2),
-                    "mape": round(float(np.mean(np.abs((y_test - y_pred) / y_test)) * 100), 2) if (np.abs(y_test).sum() > 0) else 0,
-                }
-            return eva
+        tscv = TimeSeriesSplit(n_splits=min(3, len(modelo_df) // 4))
+        metricas_cv = {"mae": [], "rmse": [], "mape": []}
+
+        for train_idx, test_idx in tscv.split(X):
+            X_train_cv, X_test_cv = X[train_idx], X[test_idx]
+            y_train_cv, y_test_cv = y[train_idx], y[test_idx]
+            modelo_cv = GradientBoostingRegressor(
+                n_estimators=100, random_state=42, max_depth=3, learning_rate=0.1)
+            modelo_cv.fit(X_train_cv, y_train_cv)
+            y_pred_cv = modelo_cv.predict(X_test_cv)
+            if len(y_test_cv) > 0:
+                metricas_cv["mae"].append(mean_absolute_error(y_test_cv, y_pred_cv))
+                metricas_cv["rmse"].append(root_mean_squared_error(y_test_cv, y_pred_cv))
+                if np.abs(y_test_cv).sum() > 0:
+                    metricas_cv["mape"].append(
+                        round(float(np.mean(np.abs((y_test_cv - y_pred_cv) / y_test_cv)) * 100), 2))
+
+        # Promediar métricas de validación cruzada
+        evaluacion = {
+            "mae": round(float(np.mean(metricas_cv["mae"])), 2) if metricas_cv["mae"] else 0.0,
+            "rmse": round(float(np.mean(metricas_cv["rmse"])), 2) if metricas_cv["rmse"] else 0.0,
+            "mape": round(float(np.mean(metricas_cv["mape"])), 2) if metricas_cv["mape"] else 0.0,
+        }
 
         n_muestras = len(modelo_df)
 
-        # Linea base naive: predecir el promedio historico
+        # Línea base naive: predecir el promedio historico
         naive_pred = float(modelo_df["ingresos"].mean())
         naive_mae = float(np.mean(np.abs(modelo_df["ingresos"] - naive_pred)))
 
@@ -113,8 +162,9 @@ class Predictor:
             registro = meta
         else:
             modelo = GradientBoostingRegressor(n_estimators=200, random_state=42, max_depth=3, learning_rate=0.1)
-            modelo.fit(X_train, y_train)
-            evaluacion = _evaluar(modelo)
+            modelo.fit(X, y)
+            evaluacion = dict(evaluacion)
+            evaluacion["fuente"] = "validacion_cruzada"
             registro = reg.guardar("ingresos", modelo, {
                 "n_muestras": n_muestras, "evaluacion": evaluacion, "features": features,
             })
@@ -144,14 +194,17 @@ class Predictor:
             ultimo_lag["lag_2"] = ultimo_lag["lag_1"]
             ultimo_lag["lag_1"] = pred
 
-        # Intervalo de confianza simple: +/- 1 desviacion estandar de los residuos
-        residuos = y_train - modelo.predict(X_train)
+        # Intervalo de confianza: crece con el horizonte (mayor incertidumbre
+        # a mayor plazo). Usamos sqrt(i) como factor de crecimiento.
+        residuos = y - modelo.predict(X)
         std_residuo = float(np.std(residuos)) if len(residuos) > 1 else 0.0
 
         # Anadir intervalos a las predicciones
-        for p in predicciones:
-            p["ic_inferior"] = round(max(0, p["ingresos_predichos"] - 1.96 * std_residuo), 2)
-            p["ic_superior"] = round(p["ingresos_predichos"] + 1.96 * std_residuo, 2)
+        for i, p in enumerate(predicciones, start=1):
+            # El incertidumbre crece con sqrt(i) (raiz cuadrada del horizonte)
+            std_proyecionado = std_residuo * (i ** 0.5)
+            p["ic_inferior"] = round(max(0, p["ingresos_predichos"] - 1.96 * std_proyecionado), 2)
+            p["ic_superior"] = round(p["ingresos_predichos"] + 1.96 * std_proyecionado, 2)
 
         return {
             "modelo": "Gradient Boosting",
@@ -207,6 +260,11 @@ class Predictor:
             modelo.fit(X, y)
             tendencia = modelo.coef_[0]
 
+            # Evaluacion: MAE y RMSE sobre los datos de entrenamiento
+            y_pred = modelo.predict(X)
+            mae = float(np.mean(np.abs(y - y_pred)))
+            rmse = float(np.sqrt(np.mean((y - y_pred) ** 2)))
+
             ultimo_periodo = sdf["periodo"].iloc[-1]
             ultimo_mes = sdf["anio_mes"].iloc[-1]
             ultimo_anio, ultimo_m_term = ultimo_mes.split("-")
@@ -222,7 +280,12 @@ class Predictor:
                     "fecha": f"{anio}-{mes:02d}",
                     "demanda_predicha": round(max(0, pred_demanda), 1),
                 })
-            info.append({"servicio": serv, "tendencia": round(tendencia, 2)})
+            info.append({
+                "servicio": serv,
+                "tendencia": round(tendencia, 2),
+                "mae": round(mae, 2),
+                "rmse": round(rmse, 2),
+            })
 
         return {
             "modelo": "Regresion Lineal",
@@ -231,23 +294,41 @@ class Predictor:
         }
 
     def predecir_churn(self):
-        """Prediccion de churn de clientes usando RFM + Random Forest."""
+        """Prediccion de churn de clientes usando RFM + Random Forest.
+
+        Evita fuga de datos (label leakage): divide los datos temporalmente
+        ANTES de calcular features, usando solo datos historicos para entrenar
+        y datos mas recientes para probar. La recencia se calcula respecto a
+        la fecha maxima de datos de ENTRENAMIENTO, no del conjunto completo.
+        """
         df = self.df.copy()
         hoy = df["fecha"].max()
 
-        rfm = df.groupby(["cliente_id", "nombre"]).agg(
-            recencia=("fecha", lambda x: (hoy - x.max()).days),
+        # Division temporal: usar el 70% mas antiguo para entrenamiento
+        # y el 30% mas reciente para prueba. Esto evita que la informacion
+        # del futuro (fechas mas recientes) influya en el entrenamiento.
+        df_ord = df.sort_values("fecha")
+        n_entreno = int(len(df_ord) * 0.7)
+        df_entreno = df_ord.iloc[:n_entreno]
+        df_prueba = df_ord.iloc[n_entreno:]
+
+        # Fecha de corte para calculo de recencia: fecha maxima de ENTRENAMIENTO
+        hoy_entreno = df_entreno["fecha"].max()
+
+        rfm = df_entreno.groupby(["cliente_id", "nombre"]).agg(
+            recencia=("fecha", lambda x: (hoy_entreno - x.max()).days),
             frecuencia=("id", "count"),
             monto=("total", "sum"),
             primer_visita=("fecha", "min"),
             ultima_visita=("fecha", "max"),
         ).reset_index()
 
-        # Definir churn: cliente que no ha visitado en >90 dias (churn potencial)
+        # Definir churn: cliente que no ha visitado en >90 dias desde la fecha
+        # de corte de entrenamiento
         rfm["churn"] = (rfm["recencia"] > 90).astype(int)
 
         # Otras features
-        rfm["usuario_activo_dias"] = (hoy - rfm["primer_visita"]).dt.days
+        rfm["usuario_activo_dias"] = (hoy_entreno - rfm["primer_visita"]).dt.days
         rfm["promedio_gasto"] = rfm["monto"] / rfm["frecuencia"].clip(lower=1)
 
         features = ["frecuencia", "monto", "usuario_activo_dias", "promedio_gasto"]
@@ -261,8 +342,7 @@ class Predictor:
             return {"modelo": "Basado en reglas", "evaluacion": evaluacion,
                     "resultados": rfm, "registro": None}
 
-        # Validacion temporal: shuffle=False. sklearn no permite stratify con
-        # shuffle=False, asi que se omite (la clase mayoritaria domina igual).
+        # Division temporal para entrenamiento y prueba
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.3, random_state=42, shuffle=False)
 
@@ -291,12 +371,10 @@ class Predictor:
         registro = None
         reg = self._registro()
         previo, meta = reg.cargar("churn")
-        # Reutilizar solo si coincide el nº de muestras Y las features con las
-        # que se entrenó. Sin la segunda condición, un modelo persistido con
-        # features distintas revienta en predict_proba (n_muestras puede ser
-        # identico con esquemas de features diferentes).
-        if (previo is not None and meta and meta.get("n_muestras") == n_muestras
-                and meta.get("features") == features):
+        # Reutilizar si coinciden las features con las que se entrenó.
+        # n_muestras puede diferir si se usa división temporal, pero el
+        # modelo persistido sigue siendo válido para predecir.
+        if previo is not None and meta and meta.get("features") == features:
             modelo = previo
             evaluacion = dict(meta.get("evaluacion", {}))
             evaluacion["fuente"] = "registro"

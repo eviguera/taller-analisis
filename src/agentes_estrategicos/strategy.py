@@ -30,17 +30,22 @@ from src.core.config import VENTANA_MESES
 def generar_dossier_de_decision(
     analisis: Dict[str, Any],
     cfg: Any = None,
+    data: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Genera el dossier de decisión estratégica.
 
     Argumentos:
         analisis: resultado del Analyst Agent.
         cfg: configuración del workspace activo (AppConfig).
+        data: datasets crudos del workspace (facturas, inventario, ...). Si
+            se omite, el dossier no inventa escenarios: los marca como no
+            disponibles en vez de proyectar ceros.
 
     Devuelve un diccionario con:
         - decisiones: lista de dicts con cada recomendación.
         - escenario_conservador: proyección si no se hace nada.
         - escenario_agresivo: proyección si se aplican las acciones.
+        - escenarios_disponibles: False si no hay datos crudos para proyectar.
         - delta_ingresos: diferencia de ingresos entre ambos.
         - delta_ebitda: diferencia de EBITDA entre ambos.
     """
@@ -50,9 +55,9 @@ def generar_dossier_de_decision(
     alertas = analisis.get("alertas", [])
 
     # Base de datos del simulador a partir de los hechos del analyzer.
-    # Usamos los datos crudos si están disponibles; si no, construimos
-    # un frame mínimo a partir de los KPIs.
-    data_raw = _extraer_datos_crudos(analisis)
+    # Preferimos los datos crudos del workspace; sin ellos no se inventan
+    # proyecciones a partir de KPIs agregados.
+    data_raw = _extraer_datos_crudos(analisis, data=data)
 
     base = base_datos(data_raw) if not data_raw.empty else {}
 
@@ -85,9 +90,13 @@ def generar_dossier_de_decision(
         _decision_cartera_riesgo(salud=salud, alertas=alertas)
     )
 
-    # 3. Decisión de inventario (si hay datos).
+    # 3. Decisión de inventario (si hay datos). Recibe el diccionario
+    # completo: el inventario no vive en el frame de facturas.
     decisiones.append(
-        _decision_inventario(data=data_raw, cfg=cfg)
+        _decision_inventario(
+            data=data if isinstance(data, dict) else {},
+            cfg=cfg,
+        )
     )
 
     # Filtrar decisiones vacías.
@@ -102,44 +111,56 @@ def generar_dossier_de_decision(
         - conservador.get("totales", {}).get("ebitda", 0)
     )
 
+    escenarios_disponibles = bool(
+        conservador.get("disponible") and agresivo.get("disponible")
+    )
+
     return {
         "decisiones": decisiones,
         "escenario_conservador": conservador.get("totales", {}),
         "escenario_agresivo": agresivo.get("totales", {}),
+        "escenarios_disponibles": escenarios_disponibles,
+        "motivo_sin_escenarios": (
+            None
+            if escenarios_disponibles
+            else conservador.get(
+                "motivo",
+                "Sin datos crudos de facturación para proyectar escenarios.",
+            )
+        ),
         "delta_ingresos": delta_ingresos,
         "delta_ebitda": delta_ebitda,
         "recomendacion_principal": _elegir_recomendacion_principal(decisiones),
     }
 
 
-def _extraer_datos_crudos(analisis: Dict[str, Any]) -> pd.DataFrame:
-    """Extrae un DataFrame crudo del análisis para el simulador."""
-    import pandas as pd
+def _extraer_datos_crudos(
+    analisis: Dict[str, Any],
+    data: Dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Extrae las facturas crudas necesarias para el simulador.
 
-    # Intentar reconstruir un frame mínimo con fecha y total.
-    kpis = analisis.get("kpis", {})
-    if not kpis:
-        return pd.DataFrame(columns=["fecha", "total", "cliente_id", "estado"])
+    Prioriza los datasets del workspace. Si no hay datos crudos, devuelve un
+    DataFrame vacío con las columnas esperadas: el dossier marcará los
+    escenarios como no disponibles en vez de inventar proyecciones.
+    """
+    columnas = ["fecha", "total", "cliente_id", "estado"]
 
-    # Si no tenemos datos crudos, creamos un frame sintético mínimo
-    # a partir de los KPIs para que el simulador no falle.
-    from datetime import datetime
+    if isinstance(data, dict):
+        facturas = data.get("facturas")
+        if isinstance(facturas, pd.DataFrame) and not facturas.empty:
+            disponibles = [c for c in columnas if c in facturas.columns]
+            return facturas[disponibles].copy()
 
-    hoy = datetime.now()
-    filas = []
-    for i in range(12):
-        mes = hoy.month - i
-        anio = hoy.year
-        if mes <= 0:
-            mes += 12
-            anio -= 1
-        filas.append({
-            "fecha": f"{anio}-{mes:02d}-01",
-            "total": kpis.get("total_ingresos", 0) / 12,
-            "cliente_id": 1,
-            "estado": "Pagada",
-        })
-    return pd.DataFrame(filas)
+    # Compatibilidad con análisis que ya traen un frame crudo.
+    crudo = analisis.get("datos")
+    if not isinstance(crudo, pd.DataFrame):
+        crudo = analisis.get("data")
+    if isinstance(crudo, pd.DataFrame) and not crudo.empty:
+        disponibles = [c for c in columnas if c in crudo.columns]
+        return crudo[disponibles].copy()
+
+    return pd.DataFrame(columns=columnas)
 
 
 def _proyectar_escenario(
@@ -151,8 +172,12 @@ def _proyectar_escenario(
     """Ejecuta el simulador con un preset dado."""
     from src.simulador import proyectar, ratios_estacionales
 
-    if not base:
-        return {"totales": {"ingresos": 0, "ebitda": 0}}
+    if not base or not isinstance(data, pd.DataFrame) or data.empty:
+        return {
+            "totales": {"ingresos": 0, "ebitda": 0},
+            "disponible": False,
+            "motivo": "Sin datos crudos de facturación para proyectar.",
+        }
 
     ratios = ratios_estacionales(data) if not data.empty else None
 
@@ -160,17 +185,30 @@ def _proyectar_escenario(
     if cfg and hasattr(cfg, "simulador") and cfg.simulador:
         margen_bruto = float(cfg.simulador.get("margen_bruto", 0.42))
 
-    return proyectar(
+    parametros = aplicar_preset(
+        float(base.get("churn_mensual_historico", 0.02)),
+        preset,
+    )
+
+    resultado = proyectar(
         df=data,
         meses=VENTANA_MESES,
-        crecimiento_anual=0.08,
-        ticket_crecimiento=0.04,
-        churn_mensual=None,
-        efecto_giro_nba=0.0,
+        crecimiento_anual=parametros["crecimiento_anual"],
+        ticket_crecimiento=parametros["ticket_crecimiento"],
+        churn_mensual=parametros["churn_mensual"],
+        efecto_giro_nba=parametros["efecto_giro_nba"],
         margen_bruto=margen_bruto,
         gasto_fijo_mensual=None,
         ratios=ratios,
     )
+    if not resultado:
+        return {
+            "totales": {"ingresos": 0, "ebitda": 0},
+            "disponible": False,
+            "motivo": "El simulador no pudo construir una base con las facturas disponibles.",
+        }
+    resultado["disponible"] = True
+    return resultado
 
 
 def _decision_ingresos(kpis: dict, cfg: Any = None) -> dict:

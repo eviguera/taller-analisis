@@ -61,7 +61,9 @@ _SOLO_LECTURA = re.compile(
 # archivos que DuckDB expone como funcion.
 _PELIGROSO = re.compile(
     r"\b(?:copy|attach|detach|install|load|export|import|call|pragma|delete|"
-    r"insert|update|drop|create|alter|truncate|vacuum|checkpoint|force|set)\b"
+    r"insert|update|drop|create|alter|truncate|vacuum|checkpoint|force|set|"
+    r"dblink|dblink_connect|lo_import|lo_export|lo_get|lo_put|copy_from|"
+    r"copy_to|pg_read_file|pg_ls_dir|pg_read_binary_file)\b"
     r"|;|read_\w+\s*\(|sniff_\w+\s*\(|\w+_scan\s*\(|glob\("
     r"|\.\s*\./"
     # Literales con forma de ruta o URL: FROM '/tmp/x.csv', FROM 'file://...'
@@ -73,6 +75,35 @@ _PELIGROSO = re.compile(
     r"sqlite)['\"]",
     re.IGNORECASE,
 )
+# Identificador valido: solo minusculas, digitos y guion bajo, empezando por
+# letra o guion bajo. Se usa para validar nombres de tabla y columna en
+# sentencias SQL de solo lectura (evitar inyeccion via identificadores).
+_IDENTIFICADOR_VALIDO = re.compile(r"^[a-z_][a-z0-9_]*$")
+# Palabras clave que SIEMPRE preceden a un identificador de tabla o columna.
+_IDENTIFICADOR_DESPUES_DE = re.compile(
+    r"\b(?:from|into|join|update|set|table|column|index|view)\b",
+    re.IGNORECASE,
+)
+
+
+def _extraer_identificador(texto: str, inicio: int) -> str:
+    """Extrae un identificador SQL empezando en ``inicio``.
+
+    Salta comillas si las hay y devuelve el identificador hasta el primer
+    caracter que no sea alfanumerico o guion bajo.
+    """
+    resto = texto[inicio:].lstrip()
+    if not resto:
+        return ""
+    if resto[0] in ('"', "'"):
+        fin = resto.find(resto[0], 1)
+        return resto[1:fin] if fin > 0 else resto[1:]
+    fin = len(resto)
+    for i, ch in enumerate(resto):
+        if not (ch.isalnum() or ch == "_"):
+            fin = i
+            break
+    return resto[:fin]
 
 
 def validar_solo_lectura(consulta: str, origen: str = "La consulta") -> None:
@@ -95,6 +126,45 @@ def validar_solo_lectura(consulta: str, origen: str = "La consulta") -> None:
         raise ValueError(
             f"{origen} contiene operaciones no permitidas en modo lectura "
             "(escrituras, ATTACH o lectura de archivos).")
+
+    # Validar identificadores de tabla y columna contra allowlist.
+    # Solo validamos despues de palabras clave que SIEMPRE esperan un
+    # identificador de objeto (tabla o columna), no despues de operadores
+    # que pueden llevar numeros de columna, expresiones, etc.
+    for m in _IDENTIFICADOR_DESPUES_DE.finditer(texto):
+        ident = _extraer_identificador(texto, m.end())
+        if ident and not _IDENTIFICADOR_VALIDO.match(ident):
+            raise ValueError(
+                f"{origen} contiene un identificador invalido: {ident!r}. "
+                f"Solo se permiten minusculas, digitos y guion bajo, "
+                f"empezando por letra o guion bajo.")
+
+    # Validar columnas despues de SELECT (solo identificadores simples, no
+    # expresiones con parentesis, funciones, alias complejos, etc.).
+    m_select = re.match(r"\s*select\s+(.+?)\s+from\b", texto, re.IGNORECASE | re.DOTALL)
+    if m_select:
+        select_part = m_select.group(1)
+        for parte in select_part.split(","):
+            parte = parte.strip()
+            # Si tiene parentesis (funcion como SUM(col)), saltar.
+            if "(" in parte:
+                continue
+            ident = parte.strip()
+            # El comodín * es válido.
+            if ident == "*":
+                continue
+            # Los números (columnas por posición en GROUP BY/ORDER BY) son válidos.
+            if ident.isdigit():
+                continue
+            # Quitar alias con AS
+            ident = re.sub(r"\s+as\s+.*$", "", ident, flags=re.IGNORECASE).strip()
+            # Tomar solo la primera palabra (descartar posibles sufijos)
+            ident = ident.split()[0] if ident.split() else ident
+            if ident and not _IDENTIFICADOR_VALIDO.match(ident):
+                raise ValueError(
+                    f"{origen} contiene un identificador invalido: {ident!r}. "
+                    f"Solo se permiten minusculas, digitos y guion bajo, "
+                    f"empezando por letra o guion bajo.")
 
 
 def mensaje_error(e: Exception) -> str:
@@ -294,7 +364,8 @@ def _string_a_detalle(df: pd.DataFrame, tipo: str) -> pd.DataFrame:
     return df
 
 
-def ejecutar_conectores(cfg: AppConfig, ya_cargados: Optional[set] = None):
+def ejecutar_conectores(cfg: AppConfig, ya_cargados: Optional[set] = None
+                        ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, str]]:
     """Ejecuta todos los conectores del workspace.
 
     Devuelve ``(datos, errores)``:
@@ -333,24 +404,46 @@ def sincronizar_conectores(cfg: AppConfig, store=None) -> List[dict]:
         store = get_store(cfg)
     resumen: List[dict] = []
     try:
-        datos, errores = ejecutar_conectores(cfg)
-        for dataset, df in datos.items():
-            store.registrar_tabla(dataset, df)
-        conectores = {c.nombre: c for c in parsear_conectores(cfg)}
-        for dataset, df in datos.items():
-            conector = conectores.get(dataset) or next(
-                (c for c in conectores.values() if c.dataset == dataset), None)
-            resumen.append({
-                "nombre": conector.nombre if conector else dataset,
-                "dataset": dataset, "filas": len(df),
-                "ok": True, "error": None,
-            })
-        for nombre, err in errores.items():
-            conector = conectores.get(nombre)
-            resumen.append({
-                "nombre": nombre, "dataset": conector.dataset if conector else nombre,
-                "filas": 0, "ok": False, "error": err,
-            })
+        # Envolver todo en transacción para atomicidad: si falla cualquier
+        # registro, se deshacen todos los cambios anteriores.
+        try:
+            store.ejecutar("BEGIN TRANSACTION")
+        except Exception as exc:
+            # Algunos adaptadores pueden no soportar transacciones explícitas
+            # (o ya estar dentro de una); continuar sin transacción explícita,
+            # pero dejar rastro para diagnosticar.
+            log.debug("No se pudo abrir transacción explícita: %s", exc)
+        try:
+            datos, errores = ejecutar_conectores(cfg)
+            for dataset, df in datos.items():
+                store.registrar_tabla(dataset, df)
+            conectores = {c.nombre: c for c in parsear_conectores(cfg)}
+            for dataset, df in datos.items():
+                conector = conectores.get(dataset) or next(
+                    (c for c in conectores.values() if c.dataset == dataset), None)
+                resumen.append({
+                    "nombre": conector.nombre if conector else dataset,
+                    "dataset": dataset, "filas": len(df),
+                    "ok": True, "error": None,
+                })
+            for nombre, err in errores.items():
+                conector = conectores.get(nombre)
+                resumen.append({
+                    "nombre": nombre, "dataset": conector.dataset if conector else nombre,
+                    "filas": 0, "ok": False, "error": err,
+                })
+            # Confirmar transacción
+            try:
+                store.ejecutar("COMMIT")
+            except Exception as exc:
+                log.warning("No se pudo confirmar la transacción: %s", exc)
+        except Exception:
+            # Revertir transacción en caso de error
+            try:
+                store.ejecutar("ROLLBACK")
+            except Exception as exc:
+                log.warning("No se pudo revertir la transacción: %s", exc)
+            raise
         return resumen
     finally:
         if cerrar:
@@ -476,4 +569,21 @@ def escribir_conectores(cfg: AppConfig, conectores: list, reemplazar: bool = Fal
     raw["conectores"] = nuevos
     ruta.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
                     encoding="utf-8")
+
+
     return ruta, nuevos
+__all__ = [
+    "MOTOR_DUCKDB",
+    "MOTOR_POSTGRES",
+    "MOTORES_LOCALES",
+    "MOTORES_SQL_EXTERNOS",
+    "validar_solo_lectura",
+    "conectar",
+    "ejecutar_conectores",
+    "sincronizar_conectores",
+    "crear_snapshot_erp",
+    "conectores_desde_snapshot",
+    "escribir_conectores",
+    "parsear_conectores",
+    "mensaje_error",
+]

@@ -23,7 +23,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ..aplicacion import VISTAS_PARA_EXPORTAR  # noqa: F401  (compat con tests)
+from .almacen import VISTAS_PARA_EXPORTAR  # noqa: F401  (compat con tests)
 
 
 # ------------------------------------------------------------------

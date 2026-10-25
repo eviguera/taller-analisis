@@ -55,14 +55,10 @@ auth.fijar_proveedor_identidad(IdentidadStreamlit())
 def _titulo() -> None:
     # Sin hex fijo: el color hereda el del tema y la opacidad lo suaviza,
     # asi el subtitulo contrasta igual en claro y en oscuro.
-    st.markdown(
-        f"<div style='text-align:center;padding:1.5rem 0 .5rem'>"
-        f"<div style='font-size:2.6rem'>{_ICONO}</div>"
-        f"<h2 style='margin:.4rem 0 0'>Acceso a GIRO</h2>"
-        f"<p style='color:inherit;opacity:.7;margin:.2rem 0 0'>"
-        f"Inteligencia de negocio para tu empresa</p></div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"<div style='text-align:center;padding:1.5rem 0 .5rem'>{_ICONO}</div>",
+                unsafe_allow_html=False)
+    st.title("Acceso a GIRO")
+    st.caption("Inteligencia de negocio para tu empresa")
 
 
 def _form_bootstrap() -> None:

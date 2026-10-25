@@ -567,6 +567,141 @@ def cmd_warehouse(args):
             print(df.to_string(index=False))
 
 
+def cmd_eval(args):
+    """Ejecuta la suite de evaluación determinística (recomendaciones y alertas)."""
+    from src.evaluacion import ejecutar_todos
+
+    resultados = ejecutar_todos()
+    print("=" * 70)
+    print("EVALUACION DETERMINISTICA DE GIRO")
+    print("=" * 70)
+    todos_pasan = True
+    for nombre, ok, mensaje in resultados:
+        estado = "PASS" if ok else "FAIL"
+        detalle = mensaje if mensaje else "OK"
+        print(f"[{estado}] {nombre}: {detalle}")
+        if not ok:
+            todos_pasan = False
+    print()
+    if todos_pasan:
+        print(f"Todos los escenarios ({len(resultados)}) pasaron.")
+        return 0
+    else:
+        print(f"Algunos escenarios fallaron ({len(resultados)} ejecutados).")
+        return 1
+
+
+def cmd_onboarding(args):
+    """Genera la configuracion inicial de un workspace por sector vertical."""
+    from src.onboarding import configuracion_por_sector, SECTORES, validar_sector
+
+    try:
+        cfg = configuracion_por_sector(
+            args.sector, args.clave, nombre=args.nombre, moneda=args.moneda)
+    except ValueError as e:
+        print(f"Error: {e}")
+        print(f"Sectores disponibles: {', '.join(SECTORES)}")
+        return 1
+
+    print("=" * 70)
+    print(f"ONBOARDING · sector={args.sector} · workspace={args.clave}")
+    print("=" * 70)
+    print(f"  nombre: {cfg['negocio_nombre']}")
+    print(f"  moneda: {cfg['moneda']}")
+    print(f"  alertas activas: {sum(1 for v in cfg['alertas'].values() if v)} reglas")
+    print(f"  intervalos de mantenimiento: {len(cfg['mantenimiento'].get('intervalos_meses', {}))}")
+    print(f"  tema: color primario {cfg['tema']['color_primario']}")
+    print()
+    print("Configuracion generada (lista para escribir en config.yaml):")
+    import yaml
+    print(yaml.dump(cfg, allow_unicode=True, sort_keys=False))
+
+    if args.escribir:
+        from pathlib import Path
+        ruta = Path(args.escribir)
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        ruta.write_text(yaml.dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        print(f"Escrito en: {ruta}")
+    return 0
+
+
+def cmd_scheduler(args):
+    """Ejecuta el scheduler de jobs recurrentes del workspace."""
+    import asyncio
+    from src.scheduler import Scheduler
+
+    cfg = _config(args)
+    sched = Scheduler(cfg.directorio_datos, poll_interval_seconds=args.intervalo)
+    print(f"Scheduler iniciado para workspace '{cfg.clave}' (intervalo {args.intervalo}s).")
+    print("Presiona Ctrl+C para detener.")
+    try:
+        asyncio.run(sched.run())
+    except KeyboardInterrupt:
+        print("\nScheduler detenido.")
+    return 0
+
+
+def cmd_briefing(args):
+    """Genera el briefing ejecutivo narrativo del workspace."""
+    from src.alertas_avanzadas import evaluar_alertas_avanzadas
+    from src.analyzer import Analyzer
+    from src.briefing import generar_briefing
+    from src.data_loader import load_all
+    from src.negocio import salud_cartera
+
+    cfg = _config(args)
+    data = load_all(cfg)
+    analyzer = Analyzer(data)
+    kpis = analyzer.kpis_globales()
+    salud = salud_cartera(analyzer)
+    alertas = evaluar_alertas_avanzadas(cfg, data)
+
+    texto = generar_briefing(data, kpis, alertas, salud, cfg)
+    print("=" * 70)
+    print("BRIEFING EJECUTIVO")
+    print("=" * 70)
+    print(texto)
+    return 0
+
+
+def cmd_memoria(args):
+    """Muestra el ledger de decisiones del workspace (memoria operativa)."""
+    from src.memoria import (
+        inicializar_db, obtener_decisiones_recientes, listar_decisiones,
+        obtener_iniciativas_activas, ruta_db_por_workspace,
+    )
+
+    cfg = _config(args)
+    db_path = ruta_db_por_workspace(cfg.directorio_datos)
+    inicializar_db(db_path)
+
+    if args.accion == "decisiones":
+        decisiones = obtener_decisiones_recientes(limite=args.limite, db_path=db_path)
+        print("=" * 70)
+        print(f"DECISIONES RECIENTES · workspace={cfg.clave}")
+        print("=" * 70)
+        if not decisiones:
+            print("(sin decisiones registradas)")
+        for d in decisiones:
+            print(f"\n[{d.timestamp[:10]}] {d.dominio}: {d.resumen[:100]}")
+            if d.justificacion:
+                print(f"   justificacion: {d.justificacion[:120]}")
+            if d.resultado:
+                print(f"   resultado: {d.resultado[:120]}")
+    elif args.accion == "iniciativas":
+        iniciativas = obtener_iniciativas_activas(db_path=db_path)
+        print("=" * 70)
+        print(f"INICIATIVAS ACTIVAS · workspace={cfg.clave}")
+        print("=" * 70)
+        if not iniciativas:
+            print("(sin iniciativas activas)")
+        for i in iniciativas:
+            print(f"\n- {i.titulo} [{i.estado}]")
+            if i.resumen:
+                print(f"   {i.resumen[:120]}")
+    return 0
+
+
 def cmd_usuarios(args):
     """Gestiona el registro de usuarios y los roles de acceso a la app."""
     from getpass import getpass
@@ -795,6 +930,40 @@ def main():
     pu_a.add_argument("--activo", type=lambda v: v.lower() in ("1", "true", "si", "yes"),
                       default=None)
     pu_a.set_defaults(func=cmd_usuarios)
+
+    # --- Evaluacion deterministica ---
+    pev = subparsers.add_parser("eval", help="Ejecuta la suite de evaluacion deterministica")
+    pev.set_defaults(func=cmd_eval)
+
+    # --- Onboarding por sector vertical ---
+    pon = subparsers.add_parser("onboarding", help="Genera config inicial de un workspace por sector")
+    pon.add_argument("sector", type=str, help="Vertical: " + ", ".join(sorted(__import__("src.onboarding", fromlist=["SECTORES"]).SECTORES)))
+    pon.add_argument("clave", type=str, help="Clave del workspace (p. ej. taller-don-juan)")
+    pon.add_argument("--nombre", type=str, default=None, help="Nombre del negocio")
+    pon.add_argument("--moneda", type=str, default=None, help="Moneda (p. ej. MXN, CLP, USD)")
+    pon.add_argument("--escribir", type=str, default=None, help="Ruta donde escribir el config.yaml generado")
+    pon.set_defaults(func=cmd_onboarding)
+
+    # --- Scheduler de jobs recurrentes ---
+    psc = subparsers.add_parser("scheduler", help="Ejecuta el scheduler de jobs recurrentes")
+    psc.add_argument("--data", type=str, default=None)
+    psc.add_argument("--intervalo", type=int, default=30, help="Segundos entre polls (default: 30)")
+    psc.set_defaults(func=cmd_scheduler)
+
+    # --- Briefing ejecutivo narrativo ---
+    pbr = subparsers.add_parser("briefing", help="Genera el briefing ejecutivo narrativo")
+    pbr.add_argument("--data", type=str, default=None)
+    pbr.set_defaults(func=cmd_briefing)
+
+    # --- Memoria operativa (ledger de decisiones) ---
+    pme = subparsers.add_parser("memoria", help="Ledger de decisiones y memoria operativa del workspace")
+    pme.add_argument("--data", type=str, default=None)
+    pme_sub = pme.add_subparsers(dest="accion", required=True)
+    pme_d = pme_sub.add_parser("decisiones", help="Muestra decisiones recientes")
+    pme_d.add_argument("--limite", type=int, default=10)
+    pme_d.set_defaults(func=cmd_memoria)
+    pme_i = pme_sub.add_parser("iniciativas", help="Muestra iniciativas activas")
+    pme_i.set_defaults(func=cmd_memoria)
 
     args = parser.parse_args()
     try:

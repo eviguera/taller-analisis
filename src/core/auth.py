@@ -147,27 +147,28 @@ def verificar_hash(password: str, hash_guardado: str) -> bool:
 #  Firma de la cookie de sesion
 # ---------------------------------------------------------------------------
 
-def _clave_firma() -> bytes:
-    """Secreto de firma: ``GIRO_AUTH_SECRET`` o, si falta, uno persistido local.
+#: Secreto de firma en memoria (regla 2: nada de secretos en disco).
+#: Si no hay GIRO_AUTH_SECRET, se genera una vez al arrancar el proceso y
+#: se reusa mientras viva el proceso. Cada reinicio invalida las sesiones,
+#: que es el comportamiento correcto y seguro.
+_clave_firma_en_memoria: Optional[bytes] = None
 
-    El archivo alterno vive fuera de ``workspaces/`` y con permisos 0600, y se
-    crea una sola vez. Sin el secreto, cada reinicio invalidaria las sesiones.
+
+def _clave_firma() -> bytes:
+    """Secreto de firma: ``GIRO_AUTH_SECRET`` o, si falta, uno en memoria.
+
+    Nunca se escribe a disco: la regla 2 de AGENTS.md prohíbe secretos en
+    ficheros. Sin el secreto, cada reinicio invalidaría las sesiones, lo cual
+    es correcto y esperado.
     """
     secreto = os.environ.get("GIRO_AUTH_SECRET", "").strip()
     if secreto:
         return secreto.encode("utf-8")
-    ruta = _RAIZ / "data" / ".giro_auth_secret"
-    if ruta.exists():
-        return ruta.read_bytes().strip()
-    ruta.parent.mkdir(parents=True, exist_ok=True)
-    valor = base64.urlsafe_b64encode(secrets.token_bytes(32))
-    try:
-        ruta.write_bytes(valor)
-        ruta.chmod(0o600)
-    except OSError:
-        # Sistema de archivos de solo lectura: la sesion durara lo que el proceso.
-        pass
-    return valor
+
+    global _clave_firma_en_memoria
+    if _clave_firma_en_memoria is None:
+        _clave_firma_en_memoria = base64.urlsafe_b64encode(secrets.token_bytes(32))
+    return _clave_firma_en_memoria
 
 
 def firmar(datos: dict) -> str:

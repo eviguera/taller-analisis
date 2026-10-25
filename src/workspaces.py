@@ -187,7 +187,7 @@ def crear_workspace(clave: str, nombre: Optional[str] = None,
                 shutil.copy2(archivo, destino / "data" / archivo.name)
                 copiados += 1
         if copiados == 0:
-            print("  (nota: no habia archivos de muestra para copiar)")
+            log.warning("No hubo archivos de muestra para copiar")
 
     return config_workspace(clave)
 

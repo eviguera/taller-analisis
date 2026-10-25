@@ -254,8 +254,7 @@ def dbname_postgres(cfg, prefijo: Optional[str] = None) -> str:
         raise ValueError(
             "El workspace no tiene clave: no se puede derivar su base de "
             "datos de Postgres sin riesgo de mezclar tenants.")
-
-    # La clave ya viene validada (``^[a-z0-9][a-z0-9_-]{0,63}$``) pero puede
+    # La clave ya viene validada (^[a-z0-9][a-z0-9_-]{0,63}$) pero puede
     # llevar '-', que no queremos en el nombre de base de datos.
     base = re.sub(r"[^a-z0-9_]", "_", clave)
     if prefijo is None:

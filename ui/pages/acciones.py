@@ -119,7 +119,7 @@ def principal():
                                  "Las 6 primeras de la cola, listas para enviar")
                 lineas = [f"- {c.badge(et, col)} — {canal}: _{msj}_"
                           for et, col, canal, msj in zip(etiquetas, colores, top6["canal"], top6["mensaje"])]
-                st.markdown("\n".join(lineas))
+                c.html("\n".join(lineas))
                 c.descargar(acciones, "next_best_action")
 
     with tab_mant:

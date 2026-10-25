@@ -13,43 +13,44 @@ datos ya cargados y opera sobre `PuertoAlmacen`, sin conocer el motor.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from ..core import conector_sql
+from ..core.metadatos import EJEMPLOS_SQL, VISTAS_PARA_EXPORTAR
 from ..puertos import PuertoAlmacen
 from .carga import derivados_almacen
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..core.config import AppConfig
 
-#: Vistas que salen en la exportacion analitica a PSPP/SPSS.
-VISTAS_PARA_EXPORTAR = [
-    "ingresos_mensuales",
-    "ingresos_por_marca",
-    "ingresos_por_vehiculo",
-    "rfm_clientes",
-    "churn_clientes",
-    "detalle_servicios",
-    "demanda_servicios_mensual",
-    "ingresos_por_servicio_mensual",
-    "factura_detalle_desnormalizado",
-    "inventario_estado",
-    "facturas_con_dimensiones",
-]
+#: Registro de fabricas de almacen. Permite romper la dependencia directa
+#: de src.aplicacion hacia src.data_loader: cualquier adaptador puede
+#: registrar su propia fabrica y abrir_almacen la usara sin importar el
+#: motor concreto.
+_ALMACEN_FABRICA: Optional[Callable[["AppConfig"], PuertoAlmacen]] = None
 
-#: Ejemplos de la consola SQL: una sola sentencia SELECT cada uno, sobre
-#: el esquema canonico. Viven aqui porque son parte del contrato del
-#: almacen (que tablas existen y como se llaman), no el copy de una
-#: pantalla: la API y el CLI pueden ofrecerlos igual que la UI.
-EJEMPLOS_SQL = {
-    "Facturas recientes": "SELECT * FROM facturas LIMIT 10",
-    "Top clientes por gasto": "SELECT nombre, SUM(total) AS gasto FROM facturas GROUP BY nombre ORDER BY gasto DESC LIMIT 10",
-    "Vehiculos por marca": "SELECT marca, COUNT(*) AS vehiculos FROM vehiculos GROUP BY marca ORDER BY vehiculos DESC",
-    "Facturas por estado": "SELECT estado, SUM(total) AS monto, COUNT(*) AS facturas FROM facturas GROUP BY estado",
-}
+
+def registrar_fabrica_almacen(fabrica: Callable[["AppConfig"], PuertoAlmacen]) -> None:
+    """Registra una fabrica de almacen.
+
+    Cualquier adaptador (DuckDB, Postgres, etc.) puede registrar su propia
+    fabrica para que abrir_almacen la use sin importar el motor concreto.
+    """
+    global _ALMACEN_FABRICA
+    _ALMACEN_FABRICA = fabrica
+
+#: Vistas que salen en la exportacion analitica a PSPP/SPSS y ejemplos de
+#: consultas SQL se definen en src.core.metadatos y se importan arriba.
+#: Se mantienen aqui como reexport para compatibilidad con codigo existente
+#: que las importe desde src.aplicacion.almacen.
+VISTAS_PARA_EXPORTAR = VISTAS_PARA_EXPORTAR  # noqa: F811
+EJEMPLOS_SQL = EJEMPLOS_SQL  # noqa: F811
 
 
 # ------------------------------------------------------------------
@@ -69,8 +70,10 @@ def firma_fuentes(cfg: "AppConfig") -> str:
     try:
         for nombre, dcfg in sorted((getattr(cfg, "datasets", None) or {}).items()):
             partes.append(f"map:{nombre}:{sorted((dcfg.mapeo or {}).items())}")
-    except (AttributeError, TypeError):
-        pass
+    except (AttributeError, TypeError) as exc:  # noqa: BLE001 — nunca se traga
+        log.warning(
+            "No se pudo leer el mapeo de columnas para la firma de fuentes: %s", exc,
+        )
     try:
         base = Path(cfg.directorio_datos)
         # El propio almacen vive aqui (almacen.duckdb y su .wal): cada
@@ -88,8 +91,10 @@ def firma_fuentes(cfg: "AppConfig") -> str:
             except OSError:
                 continue
             partes.append(f"{ruta.name}:{s.st_mtime_ns}:{s.st_size}")
-    except OSError:
-        pass
+    except OSError as exc:  # noqa: BLE001 — nunca se traga en silencio
+        log.warning(
+            "No se pudo leer el directorio de datos para la firma de fuentes: %s", exc,
+        )
     return "|".join(partes)
 
 
@@ -151,12 +156,14 @@ def validar_sql_solo_lectura(sql: str) -> None:
 def abrir_almacen(cfg: "AppConfig") -> PuertoAlmacen:
     """Almacen del workspace, listo para usar. El llamador lo cierra.
 
-    El import del adaptador es **perezoso y unico**: mientras nadie abra un
-    almacen, `src.aplicacion` no arrastra el motor concreto. Es lo que
-    permite que los casos de uso se importen en un proceso que no tenga
-    DuckDB (o que lo tenga pero use otro motor) sin romper al arrancar.
+    Si se registro una fabrica de almacen (ver registrar_fabrica_almacen),
+    la usa. De lo contrario, recurre al import perezoso de get_store como
+    fallback para retrocompatibilidad.
     """
-    from ..data_loader import get_store  # noqa: PLC0415 — dependencia del adaptador, no del nucleo
+    global _ALMACEN_FABRICA
+    if _ALMACEN_FABRICA is not None:
+        return _ALMACEN_FABRICA(cfg)
+    from ..data_loader import get_store  # noqa: PLC0415 — fallback por retrocompatibilidad
 
     return get_store(cfg)
 
@@ -218,8 +225,7 @@ def exportar_analitica_pspp(cfg: "AppConfig",
     errores: Dict[str, str] = {}
     try:
         if data:
-            store.registrar_tablas(data)
-            store.construir_estructura(data)
+            sincronizar_almacen(store, cfg, data, materializar=True)
 
         for nombre, df in data.items():
             if df is None or df.empty:

@@ -38,6 +38,7 @@ import psycopg2.errors
 from psycopg2.extras import execute_values
 from psycopg2 import sql
 
+from ..core.conector_sql import validar_solo_lectura
 from ..puertos import PuertoAlmacen
 from .dialecto import DialectoPostgres
 from .store import (
@@ -214,10 +215,10 @@ class AlmacenPostgres(PuertoAlmacen):
     def ejecutar(self, sql: Any) -> None:
         """Ejecuta una o varias sentencias SQL (DDL/DML) sin devolver datos.
 
-        Los identificadores interpolados ya vienen validados por
-        ``_nombre_valido``/``_columna`` y aqui no se pasan parametros: una
-        vista (DROP + CREATE) viaja como una sola cadena, que psycopg2
-        ejecuta de corrido.
+        Uso interno del sistema (operaciones de almacén, ETL, estructura).
+        Los llamadores externos (UI, API, MCP) deben validar que es de solo
+        lectura antes de invocarla, ya que aqui se ejecutan sentencias de
+        escritura necesarias para el funcionamiento del almacen.
         """
         if isinstance(sql, str):
             sql = [sql]
@@ -225,17 +226,18 @@ class AlmacenPostgres(PuertoAlmacen):
             for stmt in sql:
                 cur.execute(stmt)
 
-    def consulta(self, sql: str) -> pd.DataFrame:
+    def consulta(self, sql: str, limite: int = 1000) -> pd.DataFrame:
         """Ejecuta una consulta PostgreSQL y devuelve un dataframe.
 
-        SQL arbitrario del dialecto del adaptador: validar que es de solo
-        lectura le toca al llamador
-        (``src/core/conector_sql.validar_solo_lectura``), como dicta el
-        puerto.
+        SQL arbitrario del dialecto del adaptador: validamos que es de solo
+        lectura ANTES de ejecutar (defensa en profundidad), cumpliendo la
+        regla 4 de AGENTS.md. Se limita a ``limite`` filas para evitar
+        respuestas masivas.
         """
+        validar_solo_lectura(sql, "La consulta SQL")
         with self._conn.cursor() as cur:
             cur.execute(sql)
-            filas = cur.fetchall()
+            filas = cur.fetchmany(limite)
             columnas = [d[0] for d in cur.description] if cur.description else []
         return pd.DataFrame(filas, columns=columnas)
 

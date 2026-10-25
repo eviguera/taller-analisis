@@ -149,8 +149,11 @@ def principal():
                     ("Clientes activos", c.miles(n_clientes), None, None,
                      "Clientes distintos en el periodo"),
                 ])
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — nunca se traga
+                c.mensaje_error(
+                    "No se pudieron calcular los clientes activos.",
+                    detalle=str(exc) if str(exc) else "Revisa que los datos tengan columna 'cliente_id'.",
+                )
 
             try:
                 top_clientes = (
@@ -167,8 +170,11 @@ def principal():
                             top_clientes[["Cliente", "Gasto"]],
                             alto=200, indice_visible=False,
                         )
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — nunca se traga
+                c.mensaje_error(
+                    "No se pudieron calcular los top clientes.",
+                    detalle=str(exc) if str(exc) else "Revisa que los datos tengan columnas 'cliente_id', 'nombre' y 'total'.",
+                )
 
         with col_b:
             try:
@@ -177,8 +183,11 @@ def principal():
                     ("Vehículos atendidos", c.miles(n_vehiculos), None, None,
                      "Vehículos distintos en el periodo"),
                 ])
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — nunca se traga
+                c.mensaje_error(
+                    "No se pudieron calcular los vehículos atendidos.",
+                    detalle=str(exc) if str(exc) else "Revisa que los datos tengan columna 'vehiculo_id'.",
+                )
 
             try:
                 alertas = []
@@ -192,12 +201,15 @@ def principal():
                 if alertas:
                     with c.panel("Alertas activas", icono=":material/notifications_active:"):
                         for tipo, titulo, detalle in alertas:
-                            st.markdown(
+                            c.html(
                                 f"{c.badge(tipo.upper(), tipo)} **{titulo}**"
                             )
                             st.caption(detalle)
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — nunca se traga
+                c.mensaje_error(
+                    "No se pudieron calcular las alertas activas.",
+                    detalle=str(exc) if str(exc) else "Revisa que los datos tengan columnas 'estado' y 'total'.",
+                )
 
     # ---- Vista previa de datos crudos ----
     with st.expander("Ver datos crudos (filtrados)", icon=":material/table_rows:"):

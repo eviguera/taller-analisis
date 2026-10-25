@@ -5,7 +5,18 @@ import streamlit as st
 
 from ui import components as c
 from ui.context import en_kiosco, exigir_escritura, obtener_estado
-from src.alerts import evaluar_alertas, resumen_alertas, generar_reporte_alertas, enviar_email
+from src.alerts import generar_reporte_alertas, enviar_email
+from src.alertas_avanzadas import (
+    evaluar_alertas_avanzadas,
+    resumen_alertas_avanzadas,
+)
+from src.memoria import (
+    agregar_mute,
+    eliminar_mute,
+    inicializar_db,
+    listar_mutes,
+    ruta_db_por_workspace,
+)
 
 COLOR = {"critica": "rojo", "media": "amarillo", "baja": "azul"}
 
@@ -23,7 +34,7 @@ def _css_estructura() -> None:
     except Exception:  # noqa: BLE001 (st.context fuera de runtime: se asume claro)
         oscuro = False
     contorno = "#60a5fa" if oscuro else "#2563eb"
-    st.markdown(
+    c.html(
         f"""
 <style>
 /* Foco visible explicito en todo lo interactivo (AA). */
@@ -51,7 +62,6 @@ textarea:focus-visible, select:focus-visible, [role="tab"]:focus-visible {{
 }}
 </style>
 """,
-        unsafe_allow_html=True,
     )
 
 
@@ -72,9 +82,19 @@ def principal():
         icono=":material/notifications_active:",
     )
 
+    db_path = ruta_db_por_workspace(cfg.directorio_datos)
     try:
-        alertas = evaluar_alertas(cfg, data, analyzer=analyzer, predictor=predictor)
-        res = resumen_alertas(alertas)
+        inicializar_db(db_path)
+    except Exception as e:  # noqa: BLE001
+        c.mensaje_error(
+            "No se pudo inicializar el ledger de alertas.",
+            detalle=str(e) if str(e) else "",
+        )
+        return
+
+    try:
+        alertas = evaluar_alertas_avanzadas(cfg, data, analyzer=analyzer, predictor=predictor)
+        res = resumen_alertas_avanzadas(alertas)
     except Exception as e:
         c.mensaje_error(
             "No se pudieron evaluar las reglas de alerta.",
@@ -104,11 +124,84 @@ def principal():
         st.success("Sin alertas activas en este momento.", icon=":material/verified:")
     for a in alertas:
         with st.container(border=True):
-            st.markdown(
+            c.html(
                 f"{c.badge(a['severidad'].upper(), COLOR.get(a['severidad'], 'info'))} "
                 f"**{a['titulo']}**"
             )
             st.caption(a["detalle"])
+
+    # ---- Mutes de alertas ----
+    st.markdown("## Silenciar alertas (mutes)")
+    st.caption(
+        "Evita que una regla de alerta siga disparando para un tipo y entidad "
+        "determinados durante un período."
+    )
+
+    try:
+        mutes_activos = listar_mutes(db_path=db_path)
+    except Exception as e:  # noqa: BLE001
+        c.mensaje_error("No se pudieron leer los mutes.", detalle=str(e))
+        mutes_activos = []
+
+    col_m1, col_m2 = st.columns([3, 1])
+    with col_m1:
+        with st.form("form_mute_alerta", border=False):
+            mute_tipo = st.text_input(
+                "Tipo de alerta", key="inp_mute_tipo_alerta",
+                placeholder="ej: stock_bajo, churn, caida_ingresos"
+            )
+            mute_entidad = st.text_input(
+                "Entidad", key="inp_mute_entidad_alerta",
+                placeholder="ej: producto X, cliente Y"
+            )
+            mute_hasta = st.date_input("Silenciar hasta", key="inp_mute_hasta_alerta")
+            mute_motivo = st.text_input("Motivo", key="inp_mute_motivo_alerta")
+            submitted_mute = st.form_submit_button("Agregar mute", type="primary")
+        if submitted_mute and not en_kiosco():
+            try:
+                exigir_escritura()
+                if not mute_tipo.strip() or not mute_entidad.strip():
+                    c.mensaje_error("Tipo y entidad son obligatorios.")
+                else:
+                    hasta_iso = f"{mute_hasta.isoformat()}T23:59:59+00:00"
+                    agregar_mute(
+                        tipo=mute_tipo.strip(),
+                        entidad=mute_entidad.strip(),
+                        hasta_iso=hasta_iso,
+                        motivo=mute_motivo.strip(),
+                        db_path=db_path,
+                    )
+                    c.confirmacion_exito("Mute agregado.")
+                    st.rerun()
+            except Exception as exc:  # noqa: BLE001
+                c.mensaje_error("No se pudo agregar el mute.", detalle=str(exc))
+
+    if mutes_activos:
+        st.markdown("### Mutes activos")
+        for m in mutes_activos:
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.markdown(f"**{m.tipo}** · {m.entidad}")
+                    st.caption(f"Hasta: {m.hasta[:16]} · Motivo: {m.motivo or '—'}")
+                with col2:
+                    st.caption(f"Creado: {m.creada_en[:16]}")
+                with col3:
+                    if not en_kiosco():
+                        if st.button("Eliminar", key=f"delmute_{m.id}", width="stretch"):
+                            try:
+                                exigir_escritura()
+                                if eliminar_mute(m.id, db_path=db_path):
+                                    c.confirmacion_exito("Mute eliminado.")
+                                    st.rerun()
+                                else:
+                                    c.mensaje_error("No se encontró el mute.")
+                            except Exception as exc:  # noqa: BLE001
+                                c.mensaje_error("No se pudo eliminar el mute.", detalle=str(exc))
+                    else:
+                        st.caption("Solo lectura")
+    else:
+        c.vacio("Sin mutes activos.", icono=":material/volume_off:")
 
     st.markdown("### Reporte y notificacion")
     col1, col2 = st.columns(2, vertical_alignment="center")

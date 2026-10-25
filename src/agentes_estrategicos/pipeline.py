@@ -50,8 +50,10 @@ def ejecutar_pipeline_de_decisiones(
     if analyzer_result is not None:
         analisis["resultado_externo"] = analyzer_result
 
-    # 2. Strategy Agent: construir el dossier de decisión.
-    dossier = generar_dossier_de_decision(analisis, cfg=cfg)
+    # 2. Strategy Agent: construir el dossier de decisión. Le pasamos los
+    # datos crudos para que los escenarios se proyecten con hechos reales y
+    # no con agregados ni ceros.
+    dossier = generar_dossier_de_decision(analisis, cfg=cfg, data=data)
 
     # 3. Governance Agent: validar que no hay recomendaciones imposibles.
     validacion = validar_recomendaciones(dossier, data=data, cfg=cfg)

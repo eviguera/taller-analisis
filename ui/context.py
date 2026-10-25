@@ -55,13 +55,6 @@ def trabajo_unico() -> str:
     from src import workspaces
 
     return workspaces.CLAVE_PRINCIPAL
-    """True si la pagina se sirve en modo presentacion (``?kiosco=1``).
-
-    Las paginas lo consultan para ocultar las acciones que escriben. El
-    kiosco promete solo lectura y esa promesa tiene que valer tambien para
-    un admin que entra con su sesion abierta, no solo para el visitante.
-    """
-    return _kiosco()
 
 
 def _token() -> str:
@@ -205,8 +198,14 @@ def obtener_estado():
             st.warning("Se cargaron pocos datasets. Revisa la pagina de Datos para importar tus archivos.")
         analyzer = calcular_analista(data, ws)
         predictor = calcular_predictor(data, cfg, ws)
-    except Exception as e:  # noqa: BLE001
-        st.error(f"No se pudieron cargar los datos:\n\n`{e}`")
+    except Exception as e:  # noqa: BLE001 — nunca se traga, mensaje generico al usuario
+        import logging
+        logging.getLogger("taller.ui.context").exception(
+            "No se pudieron cargar los datos del workspace",
+        )
+        st.error(
+            "No se pudieron cargar los datos del workspace.",
+        )
         st.info("Ve a la pagina **'Mis datos'** despues de importar tus archivos.")
         st.stop()
     return cfg, data, analyzer, predictor

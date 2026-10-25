@@ -94,7 +94,7 @@ def _css_estructura() -> None:
     except Exception:  # noqa: BLE001 (st.context fuera de runtime: se asume claro)
         oscuro = False
     contorno = "#60a5fa" if oscuro else "#2563eb"
-    st.markdown(
+    c.html(
         f"""
 <style>
 /* Foco visible explicito en todo lo interactivo (AA). */
@@ -121,8 +121,7 @@ textarea:focus-visible, select:focus-visible, [role="tab"]:focus-visible {{
     max-width: 65ch;
 }}
 </style>
-""",
-        unsafe_allow_html=True,
+"""
     )
 
 
@@ -411,7 +410,7 @@ def principal():
                     n_nulos = sum(resumen["nulos"].values()) if resumen["nulos"] else 0
                     with st.expander(f"**{nombre}** · {c.miles(len(df))} filas · {len(df.columns)} cols",
                                      icon=":material/database:"):
-                        st.markdown(
+                        c.html(
                             " ".join([
                                 c.badge(f"{c.miles(len(df))} filas", "azul"),
                                 c.badge(f"{n_nulos} nulos", "verde" if n_nulos == 0 else "amarillo"),

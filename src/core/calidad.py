@@ -229,3 +229,129 @@ def resumen(calidad: pd.DataFrame) -> Dict[str, int]:
             "ok": int(estados.get(ESTADO_OK, 0)),
             "revisar": int(estados.get(ESTADO_REVISAR, 0)),
             "error": int(estados.get(ESTADO_ERROR, 0))}
+
+
+# ------------------------------------------------------------------
+#  Consistencia referencial (claves foraneas entre datasets)
+# ------------------------------------------------------------------
+
+def evaluar_consistencia_referencial(data: Dict[str, pd.DataFrame],
+                                     reglas: Optional[List[tuple[str, str, str]]] = None
+                                     ) -> pd.DataFrame:
+    """Evalua que las claves foraneas existan en el dataset de destino.
+
+    ``reglas`` es una lista de tuplas ``(dataset_origen, campo_origen,
+    dataset_destino)``. Por defecto se evalúan las parejas canonicas de
+    GIRO (facturas→clientes, facturas→vehiculos, factura_detalle→facturas)
+    cuando los datasets correspondientes existen.
+    """
+    if reglas is None:
+        reglas = []
+        if "facturas" in data and "clientes" in data:
+            reglas.append(("facturas", "cliente_id", "clientes"))
+        if "facturas" in data and "vehiculos" in data:
+            reglas.append(("facturas", "vehiculo_id", "vehiculos"))
+        if "factura_detalle" in data and "facturas" in data:
+            reglas.append(("factura_detalle", "factura_id", "facturas"))
+
+    filas: List[Dict] = []
+    for origen, campo, destino in reglas:
+        if origen not in data or destino not in data:
+            continue
+        df_origen = data[origen]
+        df_destino = data[destino]
+        if campo not in df_origen.columns or "id" not in df_destino.columns:
+            continue
+        claves_validas = set(df_destino["id"].dropna())
+        valores = df_origen[campo].dropna()
+        evaluadas = int(len(valores))
+        if evaluadas == 0:
+            continue
+        cumplen = int(valores.isin(claves_validas).sum())
+        tasa = cumplen / evaluadas
+        filas.append({
+            "dataset": f"{origen}→{destino}",
+            "campo": campo,
+            "dimension": "consistencia_referencial",
+            "regla": f"{campo} existe en {destino}.id",
+            "evaluadas": evaluadas,
+            "cumplen": cumplen,
+            "tasa": round(tasa, 4),
+            "estado": ESTADO_OK if cumplen == evaluadas else ESTADO_REVISAR,
+        })
+    return pd.DataFrame(filas, columns=COLUMNAS_RESULTADO)
+
+
+def evaluar_reconciliacion_factura_detalle(data: Dict[str, pd.DataFrame],
+                                           tolerancia: float = 0.01
+                                           ) -> pd.DataFrame:
+    """Regla de reconciliacion: SUM(detalle.subtotal) ≈ factura.total.
+
+    Compara el total de cada factura con la suma de los subtotales de sus
+    detalles. Una diferencia mayor a ``tolerancia`` (fracción del total)
+    se marca como revisar.
+    """
+    if "facturas" not in data or "factura_detalle" not in data:
+        return pd.DataFrame(columns=COLUMNAS_RESULTADO)
+
+    df_facturas = data["facturas"]
+    df_detalle = data["factura_detalle"]
+
+    if "id" not in df_facturas.columns or "total" not in df_facturas.columns:
+        return pd.DataFrame(columns=COLUMNAS_RESULTADO)
+    if "factura_id" not in df_detalle.columns or "subtotal" not in df_detalle.columns:
+        return pd.DataFrame(columns=COLUMNAS_RESULTADO)
+
+    # Agrupar detalles por factura
+    detalle_agrupado = df_detalle.groupby("factura_id")["subtotal"].sum()
+    detalle_agrupado = detalle_agrupado.rename("subtotal_total")
+
+    # Unir con facturas
+    merged = df_facturas[["id", "total"]].merge(
+        detalle_agrupado, left_on="id", right_index=True, how="left"
+    )
+    merged["subtotal_total"] = merged["subtotal_total"].fillna(0)
+
+    # Calcular diferencia relativa
+    merged["diferencia_relativa"] = (
+        abs(merged["total"] - merged["subtotal_total"]) /
+        merged["total"].abs().replace(0, pd.NA)
+    ).fillna(1.0)
+
+    filas: List[Dict] = []
+    total_filas = len(merged)
+    cumplen = int((merged["diferencia_relativa"] <= tolerancia).sum())
+
+    filas.append({
+        "dataset": "facturas↔factura_detalle",
+        "campo": "total",
+        "dimension": "consistencia_referencial",
+        "regla": "SUM(detalle.subtotal) ≈ factura.total",
+        "evaluadas": total_filas,
+        "cumplen": cumplen,
+        "tasa": round(cumplen / total_filas, 4) if total_filas else 0.0,
+        "estado": ESTADO_OK if cumplen == total_filas else ESTADO_REVISAR,
+    })
+    return pd.DataFrame(filas, columns=COLUMNAS_RESULTADO)
+
+
+def evaluar_conjunto(data: Dict[str, pd.DataFrame],
+                     reglas: Optional[List[Regla]] = None) -> pd.DataFrame:
+    """Evalua todas las reglas sobre todos los datasets cargados."""
+    trozos = [evaluar_dataset(nombre, df, reglas)
+              for nombre, df in (data or {}).items()
+              if df is not None]
+    # Consistencia referencial entre datasets (claves foraneas)
+    try:
+        trozos.append(evaluar_consistencia_referencial(data))
+    except Exception as e:  # noqa: BLE001 — se reporta, no se traga
+        log.warning("Fallo la evaluacion de consistencia referencial: %s", e)
+    # Reconciliacion factura ↔ detalle
+    try:
+        trozos.append(evaluar_reconciliacion_factura_detalle(data))
+    except Exception as e:  # noqa: BLE001 — se reporta, no se traga
+        log.warning("Fallo la evaluacion de reconciliacion factura-detalle: %s", e)
+    trozos = [t for t in trozos if not t.empty]
+    if not trozos:
+        return pd.DataFrame(columns=COLUMNAS_RESULTADO)
+    return pd.concat(trozos, ignore_index=True)

@@ -56,12 +56,18 @@ def _normalizar_columnas(df: pd.DataFrame, mapeo: Dict[str, str]) -> pd.DataFram
     return df
 
 
-def _limpiar(df: pd.DataFrame, tipo: str) -> pd.DataFrame:
+def _limpiar(df: pd.DataFrame, tipo: str,
+             estrategia_imputacion: str = "ninguna") -> pd.DataFrame:
     """Limpieza basica general: columnas vacias, duplicados y tipos basicos.
 
     Un total no parseable **no** se convierte en 0 en silencio: se deja en
     NaN y el recuento queda en ``df.attrs["coerciones"]`` para que el llamador
     lo reporte como advertencia del ETL.
+
+    ``estrategia_imputacion`` controla como rellenar nulos tras la limpieza:
+      * "ninguna" (default): deja NaN como estan.
+      * "media": rellena columnas numericas con su media.
+      * "mediana": rellena columnas numericas con su mediana.
     """
     df = df.copy()
     df = df.loc[:, ~df.columns.duplicated()]
@@ -95,6 +101,16 @@ def _limpiar(df: pd.DataFrame, tipo: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # Imputacion de nulos segun estrategia configurada
+    if estrategia_imputacion == "media":
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].fillna(df[col].mean())
+    elif estrategia_imputacion == "mediana":
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].fillna(df[col].median())
+
     df.attrs["coerciones"] = coerciones
     return df
 
@@ -120,7 +136,8 @@ def _cargar_archivos_locales(cfg: AppConfig, directorio: Path,
         try:
             cr = _cargar_dataset(cfg, dcfg, ruta)
             df = _normalizar_columnas(cr.datos, dcfg.mapeo)
-            df = _limpiar(df, nombre)
+            df = _limpiar(df, nombre,
+                          estrategia_imputacion=getattr(cfg, "imputacion_nulos", "ninguna"))
             esperadas = ETIQUETAS_ESPERADAS.get(nombre, set())
             faltantes = esperadas - set(df.columns)
             if faltantes:
@@ -208,6 +225,17 @@ def procesar_etl(cfg: AppConfig, directorio: Optional[Path] = None,
     # Calidad sobre lo que realmente va a entrar al almacen: mismos datos
     # que registra, mismas reglas que ve el usuario en la pantalla.
     resultado.calidad = evaluar_conjunto(tablas)
+    # Persistir reporte de calidad para auditoria historica
+    try:
+        from .calidad import COLUMNAS_RESULTADO
+        calidad_dir = cfg.directorio_datos / "calidad"
+        calidad_dir.mkdir(parents=True, exist_ok=True)
+        marca = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archivo_calidad = calidad_dir / f"calidad_{marca}.parquet"
+        resultado.calidad.to_parquet(archivo_calidad, index=False,
+                                     compression="zstd")
+    except Exception as e:  # noqa: BLE001 — nunca se traga
+        log.warning("No se pudo persistir reporte de calidad: %s", e)
 
     if store is not None:
         try:
@@ -253,7 +281,8 @@ def load_all(cfg: AppConfig = None, data_dir: Optional[Path] = None,
                 continue
             cr = _cargar_dataset(cfg, dcfg, ruta)
             df = _normalizar_columnas(cr.datos, dcfg.mapeo)
-            df = _limpiar(df, nombre)
+            df = _limpiar(df, nombre,
+                          estrategia_imputacion=getattr(cfg, "imputacion_nulos", "ninguna"))
             datos_final[nombre] = df
             if usar_cache:
                 _escribir_cache(cfg, nombre, df)
@@ -275,7 +304,19 @@ def _leer_cache_fresco(cfg: AppConfig, nombre: str, ruta_origen: Path) -> Option
     archivo_cache = cfg.cache_dir / f"{nombre}.parquet"
     if not archivo_cache.exists():
         return None
-    if archivo_cache.stat().st_mtime < ruta_origen.stat().st_mtime:
+    archivo_hash = cfg.cache_dir / f"{nombre}.hash"
+    if not archivo_hash.exists():
+        return None
+    try:
+        hash_guardado = archivo_hash.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return None
+    import hashlib
+    h = hashlib.sha256()
+    with ruta_origen.open("rb") as f:
+        for bloque in iter(lambda: f.read(65536), b""):
+            h.update(bloque)
+    if hash_guardado != h.hexdigest():
         return None
     try:
         return pd.read_parquet(archivo_cache)
@@ -289,9 +330,21 @@ def _escribir_cache(cfg: AppConfig, nombre: str, df: Optional[pd.DataFrame]):
         return
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
     try:
-        df.to_parquet(cfg.cache_dir / f"{nombre}.parquet", index=False)
-    except Exception:  # noqa: BLE001
-        log.warning("No se pudo escribir cache para %s", nombre)
+        df.to_parquet(cfg.cache_dir / f"{nombre}.parquet", index=False,
+                      compression="zstd")
+    except (OSError, PermissionError, ValueError) as exc:  # noqa: BLE001 — nunca se traga
+        log.warning(
+            "No se pudo escribir cache para %s: %s", nombre, exc,
+        )
+    # Guardar hash de archivo fuente para invalidacion por contenido
+    import hashlib
+    ruta_origen = cfg.directorio_datos / f"{nombre}.csv"
+    if ruta_origen.exists():
+        h = hashlib.sha256()
+        with ruta_origen.open("rb") as f:
+            for bloque in iter(lambda: f.read(65536), b""):
+                h.update(bloque)
+        (cfg.cache_dir / f"{nombre}.hash").write_text(h.hexdigest(), encoding="utf-8")
 
 
 def _necesita_recarga(directorio: Path, cfg: AppConfig) -> bool:
@@ -326,3 +379,23 @@ def get_data_summary(data: Dict[str, pd.DataFrame]) -> Dict:
             "tipos": {k: str(v) for k, v in df.dtypes.astype(str).items()},
         }
     return resumen
+
+
+__all__ = [
+    "load_all",
+    "load_clientes",
+    "load_vehiculos",
+    "load_servicios",
+    "load_facturas",
+    "load_inventario",
+    "hechos_vacios",
+    "enriquecer_facturas",
+    "get_data_summary",
+    "get_store",
+    "motor_almacen",
+    "dbname_postgres",
+    "ejecutar_etl",
+    "procesar_etl",
+    "load_all",
+    "get_data_summary",
+]

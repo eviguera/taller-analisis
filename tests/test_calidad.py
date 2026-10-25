@@ -104,7 +104,8 @@ class TestRobustez(unittest.TestCase):
     def test_conjunto_concatena_los_datasets(self):
         res = calidad.evaluar_conjunto({"facturas": _facturas(),
                                         "clientes": pd.DataFrame({"id": [1]})})
-        self.assertEqual(set(res["dataset"]), {"facturas", "clientes"})
+        self.assertEqual(set(res["dataset"]),
+                         {"facturas", "clientes", "facturas→clientes"})
 
     def test_resumen_cuenta_estados_sin_perder_filas(self):
         res = calidad.evaluar_dataset("facturas", _facturas())

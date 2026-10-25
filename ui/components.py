@@ -9,6 +9,7 @@ import io
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import plotly.express as px
@@ -76,6 +77,13 @@ def _color_texto() -> str:
     return "#dbe4f1" if _es_oscuro() else "#1e293b"
 
 
+def _color_valor_kpi(oscuro: Optional[bool] = None) -> str:
+    """Color de texto para valores destacados, legible en ambos temas."""
+    if oscuro is None:
+        oscuro = _es_oscuro()
+    return "#34D399" if oscuro else PALETA["primario"]
+
+
 # ------------------------------------------------------------------
 #  Encabezados y jerarquia visual
 # ------------------------------------------------------------------
@@ -107,10 +115,13 @@ def panel(titulo, subtitulo=None, icono=None, alto=None):
     if alto:
         kw["height"] = alto
     with st.container(**kw):
+        oscuro = _es_oscuro()
+        color_texto = "#94a3b8" if oscuro else PALETA["texto_suave"]
+        color_borde = "#334155" if oscuro else PALETA["borde_sutil"]
         st.markdown(
-            f"<div style='color:{PALETA['texto_suave']};font-size:0.75rem;"
+            f"<div style='color:{color_texto};font-size:0.75rem;"
             f"text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.5rem;'"
-            f" border-bottom:1px solid {PALETA['borde_sutil']};"
+            f" border-bottom:1px solid {color_borde};"
             f"padding-bottom:0.35rem;'>{icono + ' ' if icono else ''}{titulo}</div>",
             unsafe_allow_html=True,
         )
@@ -132,6 +143,8 @@ def kpi_grid(items):
     El primer ítem es la aguja principal: valor más grande, color primario.
     El resto son lecturas secundarias, discretas.
     """
+    oscuro = _es_oscuro()
+    color_etiqueta = "#94a3b8" if oscuro else PALETA["texto_suave"]
     with st.container(horizontal=True):
         for i, item in enumerate(items):
             etiqueta, valor = item[0], item[1]
@@ -140,29 +153,79 @@ def kpi_grid(items):
             es_primario = i == 0
             with st.container(border=True):
                 if es_primario:
+                    delta_html = (
+                        f"<div style='color:{_color_valor_kpi(oscuro)};font-size:0.8rem;'>"
+                        f"{delta}</div>"
+                        if delta else ""
+                    )
+                    ayuda_html = (
+                        f"<div style='color:{color_etiqueta};font-size:0.8rem;'>"
+                        f"{ayuda}</div>"
+                        if ayuda else ""
+                    )
                     st.markdown(
-                        f"<div style='color:{PALETA['texto_suave']};font-size:0.85rem;"
+                        f"<div style='color:{color_etiqueta};font-size:0.85rem;"
                         f"text-transform:uppercase;letter-spacing:0.08em;'>{etiqueta}</div>"
                         f"<div style='color:{PALETA['primario']};font-size:2.1rem;"
                         f"font-weight:700;'>{valor}</div>"
-                        f"{f'<div style=\"color:{PALETA['primario_suave']};font-size:0.8rem;\" '
-                        f'>{delta}</div>' if delta else ''}"
-                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.8rem;\" '
-                        f'>{ayuda}</div>' if ayuda else ''}",
+                        f"{delta_html}{ayuda_html}",
                         unsafe_allow_html=True,
                     )
                 else:
+                    delta_html = (
+                        f"<div style='color:{color_etiqueta};font-size:0.8rem;'>"
+                        f"{delta}</div>"
+                        if delta else ""
+                    )
+                    ayuda_html = (
+                        f"<div style='color:{color_etiqueta};font-size:0.8rem;'>"
+                        f"{ayuda}</div>"
+                        if ayuda else ""
+                    )
                     st.markdown(
-                        f"<div style='color:{PALETA['texto_suave']};font-size:0.85rem;"
+                        f"<div style='color:{color_etiqueta};font-size:0.85rem;"
                         f"text-transform:uppercase;letter-spacing:0.05em;'>{etiqueta}</div>"
-                        f"<div style='color:{PALETA['primario_suave']};font-size:1.4rem;"
+                        f"<div style='color:{_color_valor_kpi(oscuro)};font-size:1.4rem;"
                         f"font-weight:600;'>{valor}</div>"
-                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.8rem;\" '
-                        f'>{delta}</div>' if delta else ''}"
-                        f"{f'<div style=\"color:{PALETA['texto_suave']};font-size:0.8rem;\" '
-                        f'>{ayuda}</div>' if ayuda else ''}",
+                        f"{delta_html}{ayuda_html}",
                         unsafe_allow_html=True,
                     )
+
+
+def metrica(etiqueta: str, valor: str, delta: Optional[str] = None,
+            ayuda: Optional[str] = None, tipo: str = "primario"):
+    """Tarjeta de métrica individual con estilo consistente.
+
+    Args:
+        etiqueta: Nombre de la métrica.
+        valor: Valor principal a mostrar.
+        delta: Cambio relativo (opcional).
+        ayuda: Texto de ayuda pequeño (opcional).
+        tipo: "primario" (color primario), "secundario" (ámbar), "peligro" (rojo).
+    """
+    oscuro = _es_oscuro()
+    color_etiqueta = "#94a3b8" if oscuro else PALETA["texto_suave"]
+    color_valor = PALETA.get(tipo, PALETA["primario"])
+
+    with st.container(border=True):
+        delta_html = (
+            f"<div style='color:{PALETA['texto_suave']};font-size:0.8rem;'>"
+            f"{delta}</div>"
+            if delta else ""
+        )
+        ayuda_html = (
+            f"<div style='color:{color_etiqueta};font-size:0.8rem;'>"
+            f"{ayuda}</div>"
+            if ayuda else ""
+        )
+        st.markdown(
+            f"<div style='color:{color_etiqueta};font-size:0.85rem;"
+            f"text-transform:uppercase;letter-spacing:0.08em;'>{etiqueta}</div>"
+            f"<div style='color:{color_valor};font-size:2rem;font-weight:700;'"
+            f">{valor}</div>"
+            f"{delta_html}{ayuda_html}",
+            unsafe_allow_html=True,
+        )
 
 
 def vacio(mensaje, icono=":material/info:", detalle=None, cta=None):
@@ -214,6 +277,11 @@ def vacio_con_cta(mensaje, cta, icono=":material/info:", on_click=None,
 # ------------------------------------------------------------------
 
 def badge(texto, tipo="info"):
+    """Devuelve un badge con semántica de accesibilidad.
+
+    ``tipo`` determina el color de fondo; ``texto`` lleva el significado en
+    texto plano (no solo en color) para lectores de pantalla y daltonismo.
+    """
     color = {
         "verde": PALETA["primario"],
         "rojo": PALETA["peligro"],
@@ -223,10 +291,20 @@ def badge(texto, tipo="info"):
         "acento": PALETA["acento"],
     }.get(tipo, PALETA["texto_suave"])
     return (
-        f"<span style='background:{color};color:#ffffff;padding:2px 8px;"
+        f"<span role='status' aria-label='{texto}' "
+        f"style='background:{color};color:#ffffff;padding:2px 8px;"
         f"border-radius:4px;font-size:0.75rem;font-weight:600;"
         f"text-transform:uppercase;letter-spacing:0.05em;'>{texto}</span>"
     )
+
+
+def html(contenido):
+    """Renderiza HTML construido por los wrappers de este módulo.
+
+    Las páginas no deben llamar a ``st.markdown(..., unsafe_allow_html=True)``
+    directamente: el HTML vive aquí y el CI puede exigir que así sea.
+    """
+    st.markdown(contenido, unsafe_allow_html=True)
 
 
 # ------------------------------------------------------------------

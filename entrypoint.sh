@@ -13,6 +13,7 @@ GIRO_API_PORT="${GIRO_API_PORT:-8503}"
 PID_DASH=""
 PID_LANDING=""
 PID_API=""
+PID_SCHEDULER=""
 # La API escucha en todas las interfaces del contenedor. Se exporta para
 # que el propio proceso pueda detectar que esta expuesta y, por tanto, que
 # GIRO_AUTH=0 no le es aplicable (src/api/deps.api_expuesta).
@@ -27,24 +28,34 @@ fi
 # Limpia los procesos hijos al recibir SIGTERM/SIGINT (docker stop).
 limpiar() {
     trap - TERM INT
-    kill "${PID_DASH}" "${PID_LANDING}" "${PID_API}" 2>/dev/null || true
+    kill "${PID_DASH}" "${PID_LANDING}" "${PID_API}" "${PID_SCHEDULER}" 2>/dev/null || true
     # `wait` es builtin de bash: `timeout 10 wait` nunca funciono (timeout solo
     # ejecuta comandos externos). Se espera con un loop acotado de kill -0.
     local i=0
     while [ "${i}" -lt 10 ] && { kill -0 "${PID_DASH}" 2>/dev/null \
             || kill -0 "${PID_LANDING}" 2>/dev/null \
-            || kill -0 "${PID_API}" 2>/dev/null; }; do
+            || kill -0 "${PID_API}" 2>/dev/null \
+            || kill -0 "${PID_SCHEDULER}" 2>/dev/null; }; do
         sleep 1
         i=$((i + 1))
     done
-    kill -KILL "${PID_DASH}" "${PID_LANDING}" "${PID_API}" 2>/dev/null || true
-    wait "${PID_DASH}" "${PID_LANDING}" "${PID_API}" 2>/dev/null || true
+    kill -KILL "${PID_DASH}" "${PID_LANDING}" "${PID_API}" "${PID_SCHEDULER}" 2>/dev/null || true
+    wait "${PID_DASH}" "${PID_LANDING}" "${PID_API}" "${PID_SCHEDULER}" 2>/dev/null || true
 }
 trap limpiar TERM INT
 
 # La app exige GIRO_AUTH_SECRET en produccion (0.0.0.0). Sin el, cada
 # `docker compose up` genera uno nuevo y cierra todas las sesiones.
+# FAIL-CLOSED: si no hay secreto y la API escucha fuera de loopback, no
+# arrancamos para no exponer la app sin autenticacion.
 if [ -z "${GIRO_AUTH_SECRET:-}" ]; then
+    if [ "${GIRO_API_HOST:-127.0.0.1}" != "127.0.0.1" ] && [ "${GIRO_API_HOST:-127.0.0.1}" != "localhost" ]; then
+        echo "[giro] ERROR: GIRO_AUTH_SECRET no esta definido y la API escucha" >&2
+        echo "[giro]        en ${GIRO_API_HOST} (fuera de loopback)." >&2
+        echo "[giro]        No se puede arrancar sin secreto de sesion en produccion." >&2
+        echo "[giro]        Fijalo: export GIRO_AUTH_SECRET=\"\$(openssl rand -hex 32)\"" >&2
+        exit 1
+    fi
     echo "[giro] AVISO: GIRO_AUTH_SECRET no esta definido." >&2
     echo "[giro]        Se generara uno efimero: las sesiones se pierden" >&2
     echo "[giro]        en cada reinicio. Fijalo: openssl rand -hex 32" >&2
@@ -63,6 +74,10 @@ PID_LANDING=$!
 python -m uvicorn src.api.app:crear_app --factory \
     --host "${GIRO_API_HOST}" --port "${GIRO_API_PORT}" &
 PID_API=$!
+
+# Scheduler de jobs recurrentes (proceso aparte, sin servidor HTTP).
+python -m src.scheduler.cli &
+PID_SCHEDULER=$!
 
 # Espera a que los tres respondan antes de ceder el control a wait.
 # Streamlit responde en /_stcore/health y la API en /api/salud, de ahi la
@@ -103,9 +118,16 @@ while :; do
     fi
     if ! kill -0 "${PID_API}" 2>/dev/null; then
         wait "${PID_API}"; exito=$?
-        kill "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
-        wait "${PID_DASH}" "${PID_LANDING}" 2>/dev/null || true
+        kill "${PID_DASH}" "${PID_LANDING}" "${PID_SCHEDULER}" 2>/dev/null || true
+        wait "${PID_DASH}" "${PID_LANDING}" "${PID_SCHEDULER}" 2>/dev/null || true
         echo "[giro] la API termino (exit ${exito}); deteniendo el contenedor"
+        exit "${exito}"
+    fi
+    if ! kill -0 "${PID_SCHEDULER}" 2>/dev/null; then
+        wait "${PID_SCHEDULER}"; exito=$?
+        kill "${PID_DASH}" "${PID_LANDING}" "${PID_API}" 2>/dev/null || true
+        wait "${PID_DASH}" "${PID_LANDING}" "${PID_API}" "${PID_SCHEDULER}" 2>/dev/null || true
+        echo "[giro] el scheduler termino (exit ${exito}); deteniendo el contenedor"
         exit "${exito}"
     fi
     sleep 1

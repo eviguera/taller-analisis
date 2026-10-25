@@ -77,10 +77,10 @@ def principal():
             subtitulo=indicador.get("detalle", ""),
             icono=icono_accion,
         ):
-            st.markdown(
-                f"<div style='font-size:2rem;font-weight:700;color:{c.PALETA['primario'] if indicador.get('accion') == 'ok' else c.PALETA['peligro'] if indicador.get('accion') == 'actuar' else c.PALETA['secundario']};'>{indicador.get('valor', '-')}</div>",
-                unsafe_allow_html=True,
-            )
+            c.kpi_grid([
+                ("Valor", indicador.get('valor', '-'), None, None,
+                 indicador.get('detalle', '')),
+            ])
 
     # ---- Recomendación de acción ----
     n_actuar = resumen.get("n_decisiones_actuar", 0)
@@ -114,10 +114,11 @@ def principal():
                 subtitulo=d.get("motivo", ""),
                 icono=":material/trending_up:",
             ):
-                st.markdown(
-                    f"<div style='font-size:2rem;font-weight:700;color:{c.PALETA['primario']};'>{d.get('impacto_esperado', 0):+,.0f} vs mes anterior</div>",
-                    unsafe_allow_html=True,
-                )
+                c.kpi_grid([
+                    ("Impacto esperado",
+                     f"{d.get('impacto_esperado', 0):+,.0f}",
+                     None, None, "vs mes anterior"),
+                ])
                 st.caption(
                     f"Confianza: {d.get('confianza', 'N/A')} | "
                     f"Escenarios: conservador ${d.get('escenarios', {}).get('conservador', 0):,.0f} | "
@@ -129,44 +130,44 @@ def principal():
     # ---- Escenario 12 meses ----
     st.divider()
     st.markdown("### 📊 Escenario a 12 meses")
-    escenario_conservador = dossier.get("escenario_conservador", {})
-    escenario_agresivo = dossier.get("escenario_agresivo", {})
-    delta_ingresos = dossier.get("delta_ingresos", 0)
-    delta_ebitda = dossier.get("delta_ebitda", 0)
+    if not dossier.get("escenarios_disponibles", True):
+        c.vacio(
+            "Sin escenarios proyectados",
+            icono=":material/query_stats:",
+            detalle=(
+                dossier.get("motivo_sin_escenarios")
+                or "Importa facturas para proyectar escenarios con datos reales."
+            ),
+        )
+    else:
+        escenario_conservador = dossier.get("escenario_conservador", {})
+        escenario_agresivo = dossier.get("escenario_agresivo", {})
+        delta_ingresos = dossier.get("delta_ingresos", 0)
+        delta_ebitda = dossier.get("delta_ebitda", 0)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(
-            f"<div style='padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;text-align:center;'>"
-            f"<div style='font-size:12px;color:#64748b;text-transform:uppercase;'>Conservador</div>"
-            f"<div style='font-size:24px;font-weight:700;color:#1e293b;'>{escenario_conservador.get('ingresos', 0):,.0f}</div>"
-            f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>Ingresos 12m</div>"
-            f"<div style='font-size:12px;color:#64748b;'>{escenario_conservador.get('ebitda', 0):,.0f} EBITDA</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            f"<div style='padding:16px;background:#f0fdf4;border:1px solid #059669;border-radius:12px;text-align:center;'>"
-            f"<div style='font-size:12px;color:#14532d;text-transform:uppercase;'>Agresivo (con acciones)</div>"
-            f"<div style='font-size:24px;font-weight:700;color:#059669;'>{escenario_agresivo.get('ingresos', 0):,.0f}</div>"
-            f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>Ingresos 12m</div>"
-            f"<div style='font-size:12px;color:#64748b;'>{escenario_agresivo.get('ebitda', 0):,.0f} EBITDA</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-    with col3:
-        color_delta = "#059669" if delta_ingresos > 0 else "#dc2626" if delta_ingresos < 0 else "#64748b"
-        signo = "+" if delta_ingresos > 0 else ""
-        st.markdown(
-            f"<div style='padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;text-align:center;'>"
-            f"<div style='font-size:12px;color:#64748b;text-transform:uppercase;'>Delta ingresos</div>"
-            f"<div style='font-size:24px;font-weight:700;color:{color_delta};'>{signo}{delta_ingresos:,.0f}</div>"
-            f"<div style='font-size:12px;color:#64748b;margin-top:4px;'>vs conservador</div>"
-            f"<div style='font-size:12px;color:#64748b;'>{signo}{delta_ebitda:,.0f} Δ EBITDA</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            c.kpi_grid([
+                ("Conservador",
+                 f"{escenario_conservador.get('ingresos', 0):,.0f}",
+                 None, None,
+                 f"Ingresos 12m · EBITDA {escenario_conservador.get('ebitda', 0):,.0f}"),
+            ])
+        with col2:
+            c.kpi_grid([
+                ("Agresivo (con acciones)",
+                 f"{escenario_agresivo.get('ingresos', 0):,.0f}",
+                 None, None,
+                 f"Ingresos 12m · EBITDA {escenario_agresivo.get('ebitda', 0):,.0f}"),
+            ])
+        with col3:
+            signo = "+" if delta_ingresos > 0 else ""
+            c.kpi_grid([
+                ("Delta ingresos",
+                 f"{signo}{delta_ingresos:,.0f}",
+                 None, None,
+                 f"vs conservador · Δ EBITDA {signo}{delta_ebitda:,.0f}"),
+            ])
 
     # ---- Recomendación principal ----
     st.divider()
@@ -178,10 +179,12 @@ def principal():
             subtitulo=recomendacion.get("motivo", ""),
             icono=":material/lightbulb:",
         ):
-            st.markdown(
-                f"<div style='font-size:1.5rem;font-weight:700;color:{c.PALETA['primario']};'>{recomendacion.get('impacto_esperado', 0):+,.0f} impacto esperado</div>",
-                unsafe_allow_html=True,
-            )
+            c.kpi_grid([
+                ("Impacto esperado",
+                 f"{recomendacion.get('impacto_esperado', 0):+,.0f}",
+                 None, None,
+                 recomendacion.get('motivo', '')),
+            ])
             st.caption(
                 f"Confianza: {recomendacion.get('confianza', 'N/A')} | Área: {recomendacion.get('area', 'general')}"
             )
